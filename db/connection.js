@@ -1,0 +1,108 @@
+import { createClient } from '@libsql/client';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import logger from '../logger.js';
+
+dotenv.config();
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+let client;
+
+export function getDb() {
+  if (!client) {
+    const useLocal = process.env.LOCAL === 'true' || process.argv.includes('--local');
+
+    let url, authToken;
+
+    if (useLocal) {
+      const dbPath = path.resolve(__dirname, '..', process.env.DB_PATH || './data/mf_portfolio');
+      url = `file:${dbPath}`;
+      logger.db(`Using local SQLite  ${dbPath}`);
+    } else {
+      url       = process.env.TURSO_DATABASE_URL;
+      authToken = process.env.TURSO_AUTH_TOKEN;
+      if (!url) throw new Error('TURSO_DATABASE_URL is not set — run with LOCAL=true to use local DB');
+      logger.db(`Connecting to Turso  ${url}`);
+    }
+
+    client = createClient({ url, authToken });
+    logger.ok(useLocal ? 'Local SQLite ready' : 'Turso client ready');
+  }
+  return client;
+}
+
+// Run once at startup to ensure NAV tables exist
+export async function runMigrations() {
+  const db = getDb();
+  await db.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS feature_flags (
+      key           TEXT NOT NULL PRIMARY KEY,
+      label         TEXT NOT NULL,
+      description   TEXT NOT NULL DEFAULT '',
+      category      TEXT NOT NULL DEFAULT 'general',
+      required_plan TEXT NOT NULL DEFAULT 'free'
+    );
+
+    INSERT OR IGNORE INTO feature_flags (key, label, description, category, required_plan) VALUES
+      ('feed',              'Activity Feed',           'Portfolio change feed across all funds',          'pages',    'free'),
+      ('funds_list',        'Funds List',              'View all your mutual funds',                      'pages',    'free'),
+      ('holdings_table',    'Holdings Table',          'Monthly holdings with search & filter',           'pages',    'free'),
+      ('industry_chart',    'Industry Pie Chart',      'Industry allocation breakdown per extraction',    'charts',   'free'),
+      ('top_holdings_chart','Top Holdings Bar Chart',  'Top 10 holdings by % NAV',                       'charts',   'free'),
+      ('stock_trend',       'Stock % NAV Trend',       'Track a stock''s weight over time within a fund','charts',   'pro'),
+      ('nav_history',       'NAV History Chart',       'Full NAV price history from mfapi.in',           'charts',   'pro'),
+      ('compare_months',    'Month Comparison',        'Side-by-side diff between two months',           'analysis', 'pro'),
+      ('cross_fund',        'Cross-Fund Analysis',     'See which stocks appear across multiple funds',   'analysis', 'pro'),
+      ('overlap_matrix',    'Overlap Matrix',          'Pairwise portfolio overlap between all funds',    'analysis', 'pro'),
+      ('rising_conviction', 'Rising Conviction',       'Stocks with increasing weight across funds',      'analysis', 'pro'),
+      ('sector_drift',      'Sector Drift',            'How sector allocations shift month to month',     'analysis', 'pro'),
+      ('hidden_gems',       'Hidden Gems',             'Stocks held by few funds but with high weight',   'analysis', 'pro'),
+      ('entry_exit',        'Entry & Exit Timeline',   'When stocks entered or exited the portfolio',     'analysis', 'pro'),
+      ('stock_tracker',     'Stock Tracker',           'Track a specific stock across all your funds',    'analysis', 'pro'),
+      ('blended_portfolio', 'Blended Portfolio',       'Combine multiple funds into one virtual portfolio','analysis','pro'),
+      ('churn_rates',       'Churn Rates',             'Portfolio turnover rates per fund',               'analysis', 'pro'),
+      ('sector_rotation',   'Sector Rotation Calendar','See sector weightings change month by month',     'analysis', 'pro'),
+      ('discovery_chain',   'Discovery Chain',         'Which fund first picked up a stock',              'analysis', 'pro');
+
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      user_id          TEXT     NOT NULL PRIMARY KEY,
+      plan             TEXT     NOT NULL DEFAULT 'free',
+      status           TEXT     NOT NULL DEFAULT 'active',
+      billing_cycle    TEXT,
+      razorpay_sub_id  TEXT,
+      razorpay_plan_id TEXT,
+      current_start    INTEGER,
+      current_end      INTEGER,
+      created_at       DATETIME NOT NULL DEFAULT (datetime('now')),
+      updated_at       DATETIME NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS fund_nav_map (
+      fund_id       INTEGER NOT NULL PRIMARY KEY,
+      scheme_code   TEXT    NOT NULL,
+      scheme_name   TEXT    NOT NULL,
+      confirmed     INTEGER NOT NULL DEFAULT 0,
+      synced_at     DATETIME,
+      FOREIGN KEY (fund_id) REFERENCES funds(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS nav_history (
+      scheme_code TEXT NOT NULL,
+      nav_date    TEXT NOT NULL,
+      nav         REAL NOT NULL,
+      PRIMARY KEY (scheme_code, nav_date)
+    );
+
+    CREATE INDEX IF NOT EXISTS ix_nav_history_scheme ON nav_history (scheme_code);
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key   TEXT NOT NULL PRIMARY KEY,
+      value TEXT NOT NULL DEFAULT ''
+    );
+
+    INSERT OR IGNORE INTO app_settings (key, value) VALUES ('payments_enabled', 'false');
+  `);
+  logger.ok('DB migrations applied');
+}

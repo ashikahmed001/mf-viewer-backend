@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Environment — never commit real secrets
+.env
+.env.local
+.env.*.local
+
+# SQLite database files (local dev only; prod uses Turso)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.bak
+data/*.bak*
+data/*.corrupted
+data/normalisation_report.txt
+mf_portfolio.db
+mf_portfolio.db-shm
+mf_portfolio.db-wal
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
