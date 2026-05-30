@@ -25,3 +25,9 @@ npm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# Migration artifacts — local use only
+turso_dump.sql
+migrate_to_turso.mjs
+migrate_to_turso.py
+gen_dump.py
