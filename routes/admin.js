@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getDb } from '../db/connection.js';
 import { requireAdmin } from '../middleware/requireAdmin.js';
+import { invalidate, cacheStats } from '../cache.js';
 import logger from '../logger.js';
 
 const router = Router();
@@ -272,6 +273,7 @@ router.delete('/extractions/:id', async (req, res) => {
       { sql: 'DELETE FROM extractions WHERE id = ?', args: [extId] },
     ], 'write');
     logger.ok(`Admin extraction delete: id=${extId} month=${ext.report_month} fund=${ext.fund_id} holdings=${countRow.cnt}`);
+    invalidate('*');
     res.json({ deleted: true, extraction_id: extId, report_month: ext.report_month, holdings_deleted: Number(countRow.cnt) });
   } catch (err) {
     logger.error('admin/extractions/delete:', err.message);
@@ -375,6 +377,7 @@ router.delete('/funds/bulk', async (req, res) => {
       await exec('DELETE FROM funds WHERE id = ?', [fundId]);
     }
     logger.ok(`Admin bulk fund delete: ${ids.length} funds, ${totalExtractions} extractions`);
+    invalidate('*');
     res.json({ deleted: ids.length, extractions_deleted: totalExtractions });
   } catch (err) {
     logger.error('admin/funds/bulk-delete:', err.message);
@@ -393,6 +396,7 @@ router.delete('/extractions/bulk', async (req, res) => {
     ];
     await getDb().batch(statements, 'write');
     logger.ok(`Admin bulk extraction delete: ${ids.length} extractions`);
+    invalidate('*');
     res.json({ deleted: ids.length });
   } catch (err) {
     logger.error('admin/extractions/bulk-delete:', err.message);
@@ -426,6 +430,7 @@ router.delete('/funds/:id', async (req, res) => {
     await exec('DELETE FROM funds WHERE id = ?', [fundId]);
 
     logger.ok(`Admin fund delete: "${fund.name}" (id=${fundId}) — ${extractions.length} extractions removed`);
+    invalidate('*');
     res.json({ deleted: true, fund_id: fundId, name: fund.name, extractions_deleted: extractions.length });
   } catch (err) {
     logger.error('admin/funds/delete:', err.message);
@@ -493,6 +498,18 @@ router.get('/fund-gaps', async (req, res) => {
     logger.error('admin/fund-gaps:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// GET /admin/cache — view cache stats
+router.get('/cache', (req, res) => {
+  res.json(cacheStats());
+});
+
+// DELETE /admin/cache — manually bust everything
+router.delete('/cache', (req, res) => {
+  invalidate('*');
+  logger.ok('Admin: cache cleared manually');
+  res.json({ cleared: true });
 });
 
 export default router;

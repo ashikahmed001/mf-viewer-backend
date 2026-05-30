@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import logger from '../logger.js';
+import { withCache } from '../cache.js';
 import {
   getHoldings, getHoldingsSummary, getDistinctIndustries, getStockTrend,
   getExtractionById, getCrossFundAnalysis, getRisingConviction, getOverlapMatrix,
@@ -45,8 +46,8 @@ router.get('/:id/holdings', async (req, res) => {
   }
 });
 
-// GET /api/extractions/:id/holdings/summary
-router.get('/:id/holdings/summary', async (req, res) => {
+// GET /api/extractions/:id/holdings/summary — extractions are immutable; cache 24h
+router.get('/:id/holdings/summary', withCache('24h'), async (req, res) => {
   try {
     logger.info(`GET /api/extractions/${req.params.id}/holdings/summary`);
 
@@ -65,8 +66,8 @@ router.get('/:id/holdings/summary', async (req, res) => {
   }
 });
 
-// GET /api/extractions/trend/:fundId/:isin
-router.get('/trend/:fundId/:isin', async (req, res) => {
+// GET /api/extractions/trend/:fundId/:isin — per stock per fund, cache 1h
+router.get('/trend/:fundId/:isin', withCache('24h'), async (req, res) => {
   try {
     const { fundId, isin } = req.params;
     logger.info(`GET trend  fund=${fundId}  isin=${isin}`);
@@ -79,8 +80,8 @@ router.get('/trend/:fundId/:isin', async (req, res) => {
   }
 });
 
-// GET /api/holdings/cross-fund
-router.get('/cross-fund', async (req, res) => {
+// GET /api/holdings/cross-fund — heavy CTE across all funds, cache 1h
+router.get('/cross-fund', withCache('24h'), async (req, res) => {
   try {
     logger.info('GET /api/holdings/cross-fund');
     const data = await getCrossFundAnalysis();
@@ -92,8 +93,8 @@ router.get('/cross-fund', async (req, res) => {
   }
 });
 
-// GET /api/holdings/overlap-matrix
-router.get('/overlap-matrix', async (req, res) => {
+// GET /api/holdings/overlap-matrix — pairwise CTE across all funds, cache 1h
+router.get('/overlap-matrix', withCache('24h'), async (req, res) => {
   try {
     logger.info('GET /api/holdings/overlap-matrix');
     const data = await getOverlapMatrix();
@@ -105,8 +106,8 @@ router.get('/overlap-matrix', async (req, res) => {
   }
 });
 
-// GET /api/holdings/rising-conviction?window=6&direction=rising|losing
-router.get('/rising-conviction', async (req, res) => {
+// GET /api/holdings/rising-conviction — window function over all funds, cache 1h
+router.get('/rising-conviction', withCache('24h'), async (req, res) => {
   try {
     const lookback  = Math.min(Math.max(parseInt(req.query.window) || 6, 3), 12);
     const direction = req.query.direction === 'losing' ? 'losing' : 'rising';
@@ -120,8 +121,8 @@ router.get('/rising-conviction', async (req, res) => {
   }
 });
 
-// GET /api/holdings/overlap-trend?fund_a=X&fund_b=Y
-router.get('/overlap-trend', async (req, res) => {
+// GET /api/holdings/overlap-trend — per fund pair, cache 1h
+router.get('/overlap-trend', withCache('24h'), async (req, res) => {
   try {
     const fundAId = parseInt(req.query.fund_a);
     const fundBId = parseInt(req.query.fund_b);
@@ -136,8 +137,8 @@ router.get('/overlap-trend', async (req, res) => {
   }
 });
 
-// GET /api/holdings/sector-drift/:fundId
-router.get('/sector-drift/:fundId', async (req, res) => {
+// GET /api/holdings/sector-drift/:fundId — per fund, cache 1h
+router.get('/sector-drift/:fundId', withCache('24h'), async (req, res) => {
   try {
     logger.info(`GET /api/holdings/sector-drift/${req.params.fundId}`);
     const data = await getSectorDrift(parseInt(req.params.fundId));
@@ -149,8 +150,8 @@ router.get('/sector-drift/:fundId', async (req, res) => {
   }
 });
 
-// GET /api/holdings/hidden-gems
-router.get('/hidden-gems', async (req, res) => {
+// GET /api/holdings/hidden-gems — cross-fund, cache 1h
+router.get('/hidden-gems', withCache('24h'), async (req, res) => {
   try {
     logger.info('GET /api/holdings/hidden-gems');
     const data = await getHiddenGems();
@@ -162,8 +163,8 @@ router.get('/hidden-gems', async (req, res) => {
   }
 });
 
-// GET /api/holdings/entry-exit/:fundId
-router.get('/entry-exit/:fundId', async (req, res) => {
+// GET /api/holdings/entry-exit/:fundId — per fund, cache 1h
+router.get('/entry-exit/:fundId', withCache('24h'), async (req, res) => {
   try {
     const fundId = parseInt(req.params.fundId);
     logger.info(`GET /api/holdings/entry-exit/${fundId}`);
@@ -207,8 +208,8 @@ router.get('/stock-search', async (req, res) => {
   }
 });
 
-// GET /api/holdings/stock-tracker/:isin
-router.get('/stock-tracker/:isin', async (req, res) => {
+// GET /api/holdings/stock-tracker/:isin — per ISIN across all funds, cache 1h
+router.get('/stock-tracker/:isin', withCache('24h'), async (req, res) => {
   try {
     const isin = decodeURIComponent(req.params.isin);
     logger.info(`GET /api/holdings/stock-tracker/${isin}`);
@@ -221,8 +222,8 @@ router.get('/stock-tracker/:isin', async (req, res) => {
   }
 });
 
-// GET /api/holdings/new-entries
-router.get('/new-entries', async (req, res) => {
+// GET /api/holdings/new-entries — cross-fund, cache 1h
+router.get('/new-entries', withCache('24h'), async (req, res) => {
   try {
     logger.info('GET /api/holdings/new-entries');
     const data = await getAllFundsNewEntries();
@@ -234,8 +235,8 @@ router.get('/new-entries', async (req, res) => {
   }
 });
 
-// GET /api/holdings/churn-rates
-router.get('/churn-rates', async (req, res) => {
+// GET /api/holdings/churn-rates — cross-fund, cache 1h
+router.get('/churn-rates', withCache('24h'), async (req, res) => {
   try {
     logger.info('GET /api/holdings/churn-rates');
     const data = await getFundChurnRates();
@@ -247,8 +248,8 @@ router.get('/churn-rates', async (req, res) => {
   }
 });
 
-// GET /api/holdings/sector-rotation
-router.get('/sector-rotation', async (req, res) => {
+// GET /api/holdings/sector-rotation — cross-fund, cache 1h
+router.get('/sector-rotation', withCache('24h'), async (req, res) => {
   try {
     logger.info('GET /api/holdings/sector-rotation');
     const data = await getSectorRotationCalendar();
@@ -260,8 +261,8 @@ router.get('/sector-rotation', async (req, res) => {
   }
 });
 
-// GET /api/holdings/discovery-chain
-router.get('/discovery-chain', async (req, res) => {
+// GET /api/holdings/discovery-chain — cross-fund, cache 1h
+router.get('/discovery-chain', withCache('24h'), async (req, res) => {
   try {
     logger.info('GET /api/holdings/discovery-chain');
     const data = await getStockDiscoveryChain();
@@ -273,8 +274,8 @@ router.get('/discovery-chain', async (req, res) => {
   }
 });
 
-// GET /api/holdings/concentration
-router.get('/concentration', async (req, res) => {
+// GET /api/holdings/concentration — cross-fund, cache 1h
+router.get('/concentration', withCache('24h'), async (req, res) => {
   try {
     logger.info('GET /api/holdings/concentration');
     const data = await getConcentrationScores();
