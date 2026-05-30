@@ -97,6 +97,41 @@ export async function runMigrations() {
 
     CREATE INDEX IF NOT EXISTS ix_nav_history_scheme ON nav_history (scheme_code);
 
+    -- ─── Performance indexes ────────────────────────────────────────────────
+    -- holdings: most queried table (100k+ rows)
+
+    -- Primary lookup — every single holdings query filters by extraction_id
+    CREATE INDEX IF NOT EXISTS ix_holdings_extraction_id
+      ON holdings (extraction_id);
+
+    -- Sorted listings — ORDER BY pct_nav DESC (default view, summary top-10)
+    CREATE INDEX IF NOT EXISTS ix_holdings_extraction_pct_nav
+      ON holdings (extraction_id, pct_nav DESC);
+
+    -- Cross-fund / overlap / stock tracker — lookup by ISIN across extractions
+    CREATE INDEX IF NOT EXISTS ix_holdings_isin
+      ON holdings (isin);
+
+    -- Overlap matrix & trend — paired lookup (extraction_id, isin) for set operations
+    CREATE INDEX IF NOT EXISTS ix_holdings_extraction_isin
+      ON holdings (extraction_id, isin);
+
+    -- Industry filter in holdings table view
+    CREATE INDEX IF NOT EXISTS ix_holdings_extraction_industry
+      ON holdings (extraction_id, industry);
+
+    -- extractions: fund_id lookups + month-range queries
+    CREATE INDEX IF NOT EXISTS ix_extractions_fund_id
+      ON extractions (fund_id);
+
+    -- Rising conviction / feed — ROW_NUMBER() OVER PARTITION BY fund_id ORDER BY report_month DESC
+    CREATE INDEX IF NOT EXISTS ix_extractions_fund_month
+      ON extractions (fund_id, report_month DESC);
+
+    -- Multi-month range queries: WHERE report_month BETWEEN ? AND ?
+    CREATE INDEX IF NOT EXISTS ix_extractions_report_month
+      ON extractions (report_month);
+
     CREATE TABLE IF NOT EXISTS app_settings (
       key   TEXT NOT NULL PRIMARY KEY,
       value TEXT NOT NULL DEFAULT ''
