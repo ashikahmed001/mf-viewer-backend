@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import logger from '../logger.js';
+import { withCache } from '../cache.js';
 import { getAllFunds, getFundById, getExtractionsByFund, compareExtractions } from '../db/queries.js';
 
 const router = Router();
 
-// GET /api/funds
-router.get('/', async (req, res) => {
+// GET /api/funds — short TTL so renames/deletes reflect within 5 mins
+router.get('/', withCache('24h'), async (req, res) => {
   try {
     logger.info('GET /api/funds — listing all funds');
     const funds = await getAllFunds();
@@ -17,8 +18,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/funds/:id
-router.get('/:id', async (req, res) => {
+// GET /api/funds/:id — per fund, 5m TTL
+router.get('/:id', withCache('24h'), async (req, res) => {
   try {
     logger.info(`GET /api/funds/${req.params.id}`);
     const fund = await getFundById(req.params.id);
@@ -34,8 +35,8 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// GET /api/funds/:id/extractions
-router.get('/:id/extractions', async (req, res) => {
+// GET /api/funds/:id/extractions — list of extractions per fund, 5m TTL
+router.get('/:id/extractions', withCache('24h'), async (req, res) => {
   try {
     logger.info(`GET /api/funds/${req.params.id}/extractions`);
     const fund = await getFundById(req.params.id);
@@ -52,8 +53,8 @@ router.get('/:id/extractions', async (req, res) => {
   }
 });
 
-// GET /api/funds/:id/compare?months[]=YYYY-MM&months[]=YYYY-MM
-router.get('/:id/compare', async (req, res) => {
+// GET /api/funds/:id/compare — month comparison, immutable data, cache 24h
+router.get('/:id/compare', withCache('24h'), async (req, res) => {
   try {
     let months = req.query['months[]'] || req.query.months;
     if (!months) {
