@@ -21,6 +21,10 @@ import feedRouter from './routes/feed.js';
 
 dotenv.config();
 
+// Startup key check — visible in Railway logs
+console.log('[boot] CLERK_SECRET_KEY     :', process.env.CLERK_SECRET_KEY     ? `sk_...${process.env.CLERK_SECRET_KEY.slice(-6)}`     : 'MISSING ❌');
+console.log('[boot] CLERK_PUBLISHABLE_KEY:', process.env.CLERK_PUBLISHABLE_KEY ? `pk_...${process.env.CLERK_PUBLISHABLE_KEY.slice(-6)}` : 'MISSING ❌');
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -60,7 +64,11 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
-app.use(clerkMiddleware());   // Parses Clerk session token on every request
+// Explicitly pass keys so Railway env vars are always picked up correctly
+app.use(clerkMiddleware({
+  secretKey:      process.env.CLERK_SECRET_KEY,
+  publishableKey: process.env.CLERK_PUBLISHABLE_KEY,
+}));
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
