@@ -245,6 +245,24 @@ router.post('/sync-all', requireAdmin, async (req, res) => {
   }
 });
 
+// ─── DELETE /api/nav/mapping/:fundId — remove NAV mapping for a fund ──────────
+router.delete('/mapping/:fundId', requireAdmin, async (req, res) => {
+  const { fundId } = req.params;
+  try {
+    const mapping = await q1('SELECT scheme_code FROM fund_nav_map WHERE fund_id = ?', [fundId]);
+    if (!mapping) return res.status(404).json({ error: 'No mapping found for this fund' });
+
+    // Remove mapping (keep nav_history — scheme_code may be shared)
+    await exec('DELETE FROM fund_nav_map WHERE fund_id = ?', [fundId]);
+
+    logger.ok(`NAV mapping removed for fund ${fundId} (was scheme ${mapping.scheme_code})`);
+    res.json({ ok: true, fund_id: Number(fundId) });
+  } catch (err) {
+    logger.error('DELETE /api/nav/mapping/:fundId failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/nav/:fundId — NAV history for a fund (public, auth only) ────────
 router.get('/:fundId', async (req, res) => {
   try {
