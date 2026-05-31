@@ -632,7 +632,7 @@ export async function getFeedData(lookback = 6) {
       .filter(g => g.length >= 2 && !contradictoryIsins.has(g[0].isin))
       .map(g => ({
         type: g[0].type, stock_name: g[0].stock_name, isin: g[0].isin, industry: g[0].industry,
-        fund_count: g.length, fund_names: g.map(e => e.fund_name),
+        fund_count: g.length, fund_names: g.map(e => e.fund_name), fund_ids: g.map(e => e.fund_id),
         avg_pct: parseFloat((g.reduce((s, e) => s + (e.pct_nav ?? e.prev_pct_nav ?? 0), 0) / g.length).toFixed(4)),
       }))
       .sort((a, b) => b.fund_count - a.fund_count);
