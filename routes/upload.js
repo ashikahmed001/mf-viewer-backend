@@ -62,7 +62,7 @@ async function callExtractorSingle(fileBuffer, filename, mimetype) {
 }
 
 // ─── POST /api/admin/upload/single ───────────────────────────────────────────
-router.post('/single', upload.single('file'), async (req, res) => {
+router.post('/upload/single', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     const result = await callExtractorSingle(req.file.buffer, req.file.originalname, req.file.mimetype);
@@ -76,7 +76,7 @@ router.post('/single', upload.single('file'), async (req, res) => {
 // ─── POST /api/admin/upload/batch ────────────────────────────────────────────
 // Proxies files to /extract/batch SSE endpoint and normalises events to our
 // standard format: start | progress | result | done | error
-router.post('/batch', upload.array('files', 20), async (req, res) => {
+router.post('/upload/batch', upload.array('files', 20), async (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: 'No files uploaded' });
 
   // Set SSE headers before anything can fail
