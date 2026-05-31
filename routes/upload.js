@@ -8,8 +8,9 @@ import logger from '../logger.js';
 const router = Router();
 router.use(requireAdmin);
 
-const EXTRACTOR_URL   = process.env.EXTRACTOR_URL  || 'https://mf-portfolio-extractor.fly.dev';
-const EXTRACT_PATH    = process.env.EXTRACTOR_PATH || '/extract';
+const EXTRACTOR_URL   = process.env.EXTRACTOR_URL || 'https://mf-portfolio-extractor.fly.dev';
+const SINGLE_PATH     = '/extract';
+const BATCH_PATH      = '/extract/batch';
 
 // Multer: memory storage, 20 MB per file, 20 files max
 const upload = multer({
@@ -52,7 +53,7 @@ async function deleteExtractionById(id) {
 async function callExtractorSingle(fileBuffer, filename, mimetype) {
   const form = new FormData();
   form.append('file', new Blob([fileBuffer], { type: mimetype }), filename);
-  const res = await fetch(`${EXTRACTOR_URL}${EXTRACT_PATH}`, { method: 'POST', body: form });
+  const res = await fetch(`${EXTRACTOR_URL}${SINGLE_PATH}`, { method: 'POST', body: form });
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     throw new Error(`Extractor returned ${res.status}: ${text}`);
@@ -73,13 +74,15 @@ router.post('/single', upload.single('file'), async (req, res) => {
 });
 
 // ─── POST /api/admin/upload/batch ────────────────────────────────────────────
-// Calls single-file extractor in parallel for each file, streams SSE progress.
+// Proxies files to /extract/batch SSE endpoint and normalises events to our
+// standard format: start | progress | result | done | error
 router.post('/batch', upload.array('files', 20), async (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: 'No files uploaded' });
 
-  res.setHeader('Content-Type',  'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection',    'keep-alive');
+  // Set SSE headers before anything can fail
+  res.setHeader('Content-Type',      'text/event-stream');
+  res.setHeader('Cache-Control',     'no-cache');
+  res.setHeader('Connection',        'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
@@ -90,27 +93,96 @@ router.post('/batch', upload.array('files', 20), async (req, res) => {
   const files = req.files;
   send('start', { total: files.length, files: files.map(f => f.originalname) });
 
-  // Process in parallel (cap concurrency at 3)
-  const CONCURRENCY = 3;
-  let idx = 0;
+  try {
+    // Build multipart FormData for the batch endpoint
+    const form = new FormData();
+    for (const f of files) {
+      form.append('files', new Blob([f.buffer], { type: f.mimetype }), f.originalname);
+    }
 
-  async function worker() {
-    while (idx < files.length) {
-      const i = idx++;
-      const file = files[i];
-      send('progress', { file: file.originalname, index: i, status: 'processing' });
-      try {
-        const result = await callExtractorSingle(file.buffer, file.originalname, file.mimetype);
-        send('result', { file: file.originalname, index: i, status: 'done', result });
-      } catch (err) {
-        send('result', { file: file.originalname, index: i, status: 'error', error: err.message });
+    const upstream = await fetch(`${EXTRACTOR_URL}${BATCH_PATH}`, { method: 'POST', body: form });
+
+    if (!upstream.ok) {
+      const text = await upstream.text().catch(() => upstream.statusText);
+      send('error', { error: `Extractor returned ${upstream.status}: ${text}` });
+      return res.end();
+    }
+
+    // Parse the upstream SSE stream and normalise each event
+    const reader  = upstream.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let completedCount = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buf += decoder.decode(value, { stream: true });
+      const chunks = buf.split('\n\n');
+      buf = chunks.pop(); // keep incomplete trailing chunk
+
+      for (const chunk of chunks) {
+        if (!chunk.trim()) continue;
+
+        // Extract optional event name and data line
+        const eventName = chunk.match(/^event:\s*(.+)$/m)?.[1]?.trim();
+        const dataStr   = chunk.match(/^data:\s*(.+)$/m)?.[1]?.trim();
+        if (!dataStr) continue;
+
+        let parsed;
+        try { parsed = JSON.parse(dataStr); } catch { continue; }
+
+        // ── Normalise to our standard events ──────────────────────────────────
+        // Pattern A: upstream sends a completed result (has 'holdings' array)
+        if (Array.isArray(parsed?.holdings)) {
+          completedCount++;
+          send('result', {
+            file:   parsed.source_file || `file_${completedCount}`,
+            index:  completedCount - 1,
+            status: 'done',
+            result: parsed,
+          });
+          continue;
+        }
+
+        // Pattern B: upstream sends a progress/status update
+        if (parsed?.status === 'processing' || parsed?.status === 'started') {
+          send('progress', {
+            file:   parsed.file || parsed.filename || parsed.source_file || '',
+            status: 'processing',
+          });
+          continue;
+        }
+
+        // Pattern C: upstream sends an error for a specific file
+        if (parsed?.error || parsed?.status === 'error') {
+          send('result', {
+            file:   parsed.file || parsed.filename || '',
+            status: 'error',
+            error:  parsed.error || parsed.message || 'Extraction failed',
+          });
+          continue;
+        }
+
+        // Pattern D: upstream sends its own done/complete event
+        if (parsed?.status === 'done' || parsed?.status === 'complete' || eventName === 'done') {
+          // Don't forward yet — we send our own 'done' below
+          continue;
+        }
+
+        // Fallback: forward raw data as-is so nothing is silently dropped
+        logger.debug('batch SSE unknown event:', JSON.stringify(parsed).slice(0, 120));
       }
     }
-  }
 
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, worker));
-  send('done', { total: files.length });
-  res.end();
+    send('done', { total: files.length, completed: completedCount });
+  } catch (err) {
+    logger.error('upload/batch:', err.message);
+    send('error', { error: err.message });
+  } finally {
+    res.end();
+  }
 });
 
 // ─── POST /api/admin/import ──────────────────────────────────────────────────
