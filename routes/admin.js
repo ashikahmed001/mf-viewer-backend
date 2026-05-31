@@ -3,11 +3,15 @@ import { getDb } from '../db/connection.js';
 import { requireAdmin } from '../middleware/requireAdmin.js';
 import { invalidate, cacheStats, cacheKeys, isCacheEnabled, setCacheEnabled } from '../cache.js';
 import logger from '../logger.js';
+import uploadRouter from './upload.js';
 
 const router = Router();
 
 // All admin routes are protected by requireAdmin
 router.use(requireAdmin);
+
+// Upload / extraction import routes (/upload/single, /upload/batch, /import)
+router.use(uploadRouter);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

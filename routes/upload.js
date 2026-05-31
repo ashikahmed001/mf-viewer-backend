@@ -1,12 +1,10 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { getDb } from '../db/connection.js';
-import { requireAdmin } from '../middleware/requireAdmin.js';
 import { invalidate } from '../cache.js';
 import logger from '../logger.js';
 
 const router = Router();
-router.use(requireAdmin);
 
 const EXTRACTOR_URL   = process.env.EXTRACTOR_URL || 'https://mf-portfolio-extractor.fly.dev';
 const SINGLE_PATH     = '/extract';
