@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getDb } from '../db/connection.js';
 import { requireAdmin } from '../middleware/requireAdmin.js';
-import { invalidate, cacheStats } from '../cache.js';
+import { invalidate, cacheStats, cacheKeys, isCacheEnabled, setCacheEnabled } from '../cache.js';
 import logger from '../logger.js';
 
 const router = Router();
@@ -260,6 +260,25 @@ router.get('/funds/:id/extractions', async (req, res) => {
   }
 });
 
+// ─── Bulk delete extractions (MUST be before /extractions/:id) ───────────────
+router.delete('/extractions/bulk', async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids array required' });
+  try {
+    const statements = [
+      ...ids.map(id => ({ sql: 'DELETE FROM holdings WHERE extraction_id = ?', args: [id] })),
+      ...ids.map(id => ({ sql: 'DELETE FROM extractions WHERE id = ?', args: [id] })),
+    ];
+    await getDb().batch(statements, 'write');
+    logger.ok(`Admin bulk extraction delete: ${ids.length} extractions`);
+    invalidate('*');
+    res.json({ deleted: ids.length });
+  } catch (err) {
+    logger.error('admin/extractions/bulk-delete:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Delete a single extraction + its holdings ────────────────────────────────
 router.delete('/extractions/:id', async (req, res) => {
   const extId = parseInt(req.params.id, 10);
@@ -293,6 +312,7 @@ router.put('/funds/:id/rename', async (req, res) => {
 
     await exec('UPDATE funds SET name = ? WHERE id = ?', [name.trim(), id]);
     logger.ok(`Admin fund rename: [${id}] "${existing.name}" → "${name.trim()}"`);
+    invalidate('/api/funds');  // bust funds list + fund detail cache
     res.json({ id, old_name: existing.name, new_name: name.trim() });
   } catch (err) {
     logger.error('admin/funds/rename:', err.message);
@@ -500,9 +520,9 @@ router.get('/fund-gaps', async (req, res) => {
   }
 });
 
-// GET /admin/cache — view cache stats
+// GET /admin/cache — view cache stats + live keys
 router.get('/cache', (req, res) => {
-  res.json(cacheStats());
+  res.json({ ...cacheStats(), keys: cacheKeys() });
 });
 
 // DELETE /admin/cache — manually bust everything
@@ -510,6 +530,20 @@ router.delete('/cache', (req, res) => {
   invalidate('*');
   logger.ok('Admin: cache cleared manually');
   res.json({ cleared: true });
+});
+
+// GET /admin/cache/enabled — returns current enabled flag
+router.get('/cache/enabled', (req, res) => {
+  res.json({ enabled: isCacheEnabled() });
+});
+
+// PATCH /admin/cache/enabled — toggle cache on/off
+router.patch('/cache/enabled', (req, res) => {
+  const { enabled } = req.body;
+  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be boolean' });
+  setCacheEnabled(enabled);
+  logger.ok(`Admin: cache ${enabled ? 'ENABLED' : 'DISABLED'}`);
+  res.json({ enabled: isCacheEnabled() });
 });
 
 export default router;

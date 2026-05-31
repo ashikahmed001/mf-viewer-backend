@@ -23,6 +23,12 @@ function parseTtl(ttl) {
   throw new Error(`Unknown TTL string "${ttl}". Use a number (ms) or one of: ${Object.keys(TTL).join(', ')}`);
 }
 
+// ─── Feature flag — can be toggled at runtime ────────────────────────────────
+let cacheEnabled = true;
+
+export function isCacheEnabled()          { return cacheEnabled; }
+export function setCacheEnabled(val)      { cacheEnabled = !!val; if (!val) { store.clear(); inflight.clear(); } }
+
 // ─── Store ───────────────────────────────────────────────────────────────────
 const store    = new Map();
 const inflight = new Map(); // key → Promise  (single-flight coalescing)
@@ -55,7 +61,19 @@ export function cacheStats() {
   for (const [, v] of store) {
     v.expires > now ? alive++ : expired++;
   }
-  return { total: store.size, alive, expired };
+  return { enabled: cacheEnabled, total: store.size, alive, expired };
+}
+
+/** Returns all live (non-expired) cache keys with ms-until-expiry. */
+export function cacheKeys() {
+  const now = Date.now();
+  const result = [];
+  for (const [key, v] of store) {
+    const ttlMs = v.expires - now;
+    if (ttlMs > 0) result.push({ key, expiresIn: ttlMs });
+  }
+  result.sort((a, b) => a.key.localeCompare(b.key));
+  return result;
 }
 
 // ─── Express middleware ───────────────────────────────────────────────────────
@@ -74,6 +92,9 @@ export function withCache(ttl, keyFn) {
   const ttlMs = parseTtl(ttl);
 
   return (req, res, next) => {
+    // Bypass entirely if cache is disabled
+    if (!cacheEnabled) { res.setHeader('X-Cache', 'DISABLED'); return next(); }
+
     const key    = keyFn ? keyFn(req) : req.originalUrl;
     const cached = cacheGet(key);
 
