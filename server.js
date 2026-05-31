@@ -14,6 +14,7 @@ import navRouter from './routes/nav.js';
 import billingRouter from './routes/billing.js';
 import featuresRouter from './routes/features.js';
 import adminRouter from './routes/admin.js';
+import uploadRouter from './routes/upload.js';
 import fundsRouter from './routes/funds.js';
 import extractionsRouter from './routes/extractions.js';
 import holdingsRouter from './routes/holdings.js';
@@ -80,6 +81,8 @@ app.get('/api/health', (req, res) => {
 
 // Admin routes (requireAdmin is applied inside the router itself)
 app.use('/api/admin',        requireAuth, adminRouter);
+app.use('/api/admin/upload', requireAuth, uploadRouter);  // single + batch upload
+app.use('/api/admin/import', requireAuth, uploadRouter);  // import/persist
 
 // Protected — all data routes require a valid Clerk session
 app.use('/api/feed',         requireAuth, feedRouter);

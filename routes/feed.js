@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import logger from '../logger.js';
+import { withCache } from '../cache.js';
 import { getFeedData } from '../db/queries.js';
 
 const router = Router();
 
-// GET /api/feed?months=6
-router.get('/', async (req, res) => {
+// GET /api/feed?months=6 — heavy cross-fund query, cache 24h per months value
+router.get('/', withCache('24h'), async (req, res) => {
   try {
     const lookback = Math.min(Math.max(parseInt(req.query.months) || 6, 2), 12);
     logger.info(`GET /api/feed  months=${lookback}`);
