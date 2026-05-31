@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb } from '../db/connection.js';
 import { requireAdmin } from '../middleware/requireAdmin.js';
 import logger from '../logger.js';
+import { runNavSync } from '../jobs/navSync.js';
 
 const router = Router();
 const MFAPI = 'https://api.mfapi.in/mf';
@@ -241,6 +242,22 @@ router.post('/sync-all', requireAdmin, async (req, res) => {
     res.json(results);
   } catch (err) {
     logger.error('POST /api/nav/sync-all failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/nav/sync-latest — manually trigger the daily sync job ──────────
+router.post('/sync-latest', requireAdmin, async (req, res) => {
+  try {
+    logger.info('nav sync-latest — triggered manually via Admin UI');
+    // Run in background so the request returns immediately
+    runNavSync()
+      .then(() => logger.ok('nav sync-latest — completed'))
+      .catch(e => logger.error('nav sync-latest — failed:', e.message));
+
+    res.json({ ok: true, message: 'NAV sync started — this runs in the background and may take a few minutes.' });
+  } catch (err) {
+    logger.error('nav sync-latest trigger failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
