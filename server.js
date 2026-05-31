@@ -81,8 +81,7 @@ app.get('/api/health', (req, res) => {
 
 // Admin routes (requireAdmin is applied inside the router itself)
 app.use('/api/admin',        requireAuth, adminRouter);
-app.use('/api/admin/upload', requireAuth, uploadRouter);  // single + batch upload
-app.use('/api/admin/import', requireAuth, uploadRouter);  // import/persist
+app.use('/api/admin',        requireAuth, uploadRouter);  // /upload/single, /upload/batch, /import
 
 // Protected — all data routes require a valid Clerk session
 app.use('/api/feed',         requireAuth, feedRouter);
