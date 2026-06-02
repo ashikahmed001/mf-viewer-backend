@@ -536,6 +536,53 @@ router.delete('/cache', (req, res) => {
   res.json({ cleared: true });
 });
 
+// GET /admin/counts — lightweight summary counts for all tab badges
+router.get('/counts', async (req, res) => {
+  try {
+    const [isinRows, nameRows, navRows, gapRows] = await Promise.all([
+      // ISIN issues: groups with more than one ISIN per company code
+      q(`SELECT COUNT(*) AS n FROM (
+           SELECT SUBSTR(isin,1,7) AS code FROM holdings
+           WHERE isin REGEXP '^INE[A-Z0-9]{4}01[0-9A-Z]{3}$'
+           GROUP BY code HAVING COUNT(DISTINCT isin) > 1
+         )`),
+      // Name issues: ISINs with more than one distinct stock_name
+      q(`SELECT COUNT(*) AS n FROM (
+           SELECT isin FROM holdings
+           GROUP BY isin HAVING COUNT(DISTINCT stock_name) > 1
+         )`),
+      // NAV unmapped: funds with no scheme_code
+      q(`SELECT COUNT(*) AS n FROM funds f
+         LEFT JOIN fund_nav_map m ON m.fund_id = f.id
+         WHERE m.scheme_code IS NULL`),
+      // Data continuity gaps: funds with missing months
+      q(`SELECT COUNT(DISTINCT fund_id) AS n FROM (
+           WITH months AS (
+             SELECT fund_id, report_month,
+               LAG(report_month) OVER (PARTITION BY fund_id ORDER BY report_month) AS prev_month
+             FROM extractions
+           )
+           SELECT fund_id FROM months
+           WHERE prev_month IS NOT NULL
+             AND CAST(STRFTIME('%m', report_month) AS INTEGER) -
+                 CAST(STRFTIME('%m', prev_month)  AS INTEGER) > 1
+             AND STRFTIME('%Y', report_month) = STRFTIME('%Y', prev_month)
+         )`),
+    ]);
+
+    res.json({
+      isin:        Number(isinRows[0]?.n ?? 0),
+      names:       Number(nameRows[0]?.n ?? 0),
+      nav_unmapped: Number(navRows[0]?.n ?? 0),
+      continuity:  Number(gapRows[0]?.n ?? 0),
+    });
+  } catch (err) {
+    logger.error('admin/counts:', err.message);
+    // Return zeros on error so the UI still loads
+    res.json({ isin: 0, names: 0, nav_unmapped: 0, continuity: 0 });
+  }
+});
+
 // GET /admin/cache/enabled — returns current enabled flag
 router.get('/cache/enabled', (req, res) => {
   res.json({ enabled: isCacheEnabled() });
