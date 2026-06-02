@@ -154,6 +154,37 @@ router.post('/name-fix', async (req, res) => {
   }
 });
 
+// ─── POST /admin/name-fix-batch — fix multiple ISINs in one request ───────────
+router.post('/name-fix-batch', async (req, res) => {
+  const { fixes } = req.body; // [{ isin, canonical_name }, ...]
+  if (!Array.isArray(fixes) || fixes.length === 0)
+    return res.status(400).json({ error: 'fixes array is required' });
+
+  try {
+    const db = getDb();
+    let total_rows = 0;
+    const results = [];
+
+    // Run all UPDATEs in parallel — each is a single indexed query, fast
+    await Promise.all(fixes.map(async ({ isin, canonical_name }) => {
+      if (!isin || !canonical_name) return;
+      const r = await db.execute({
+        sql:  'UPDATE holdings SET stock_name = ? WHERE isin = ?',
+        args: [canonical_name, isin],
+      });
+      const rows_updated = Number(r.rowsAffected ?? 0);
+      total_rows += rows_updated;
+      results.push({ isin, canonical_name, rows_updated });
+    }));
+
+    logger.ok(`Admin name-fix-batch: ${fixes.length} ISINs, ${total_rows} rows updated`);
+    res.json({ fixed: results.length, total_rows, results });
+  } catch (err) {
+    logger.error('admin/name-fix-batch:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Overlap ISIN Scanner ────────────────────────────────────────────────────
 router.get('/scan-overlapping', async (req, res) => {
   try {
