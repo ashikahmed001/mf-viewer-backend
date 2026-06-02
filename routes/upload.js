@@ -7,8 +7,8 @@ import logger from '../logger.js';
 const router = Router();
 
 const EXTRACTOR_URL   = process.env.EXTRACTOR_URL || 'https://mf-portfolio-extractor.fly.dev';
-const SINGLE_PATH     = '/extract';
-const BATCH_PATH      = '/extract/batch';
+const SINGLE_PATH     = '/v1/extract';
+const BATCH_PATH      = '/v1/extract/batch';
 
 // Multer: memory storage, 20 MB per file, 20 files max
 const upload = multer({
