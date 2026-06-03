@@ -9,5 +9,5 @@ dbs:
         secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
         sync-interval: 12h
         # Keep 30 daily snapshots
-        snapshot-interval: 24h
+        snapshot-interval: 72h
         retention: 720h
