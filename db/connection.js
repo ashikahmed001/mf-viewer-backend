@@ -42,7 +42,8 @@ export async function runMigrations() {
       label         TEXT NOT NULL,
       description   TEXT NOT NULL DEFAULT '',
       category      TEXT NOT NULL DEFAULT 'general',
-      required_plan TEXT NOT NULL DEFAULT 'free'
+      required_plan TEXT NOT NULL DEFAULT 'free',
+      enabled       INTEGER NOT NULL DEFAULT 1
     );
 
     INSERT OR IGNORE INTO feature_flags (key, label, description, category, required_plan) VALUES
@@ -138,6 +139,19 @@ export async function runMigrations() {
     );
 
     INSERT OR IGNORE INTO app_settings (key, value) VALUES ('payments_enabled', 'false');
+
+    -- Add enabled column to existing DBs that predate this migration
+    ALTER TABLE feature_flags ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+
+    CREATE TABLE IF NOT EXISTS user_feature_overrides (
+      user_id       TEXT NOT NULL,
+      feature_key   TEXT NOT NULL,
+      enabled       INTEGER,      -- NULL = inherit global, 1 = on, 0 = off
+      required_plan TEXT,         -- NULL = inherit global, 'free' | 'pro'
+      created_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+      updated_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, feature_key)
+    );
   `);
   logger.ok('DB migrations applied');
 }
