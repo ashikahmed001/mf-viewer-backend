@@ -4,9 +4,9 @@ dbs:
       - type: s3
         bucket: fundsight-backups
         path: mf_portfolio
-        endpoint: https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com
-        access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
-        secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+        endpoint: "https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+        access-key-id: "${LITESTREAM_ACCESS_KEY_ID}"
+        secret-access-key: "${LITESTREAM_SECRET_ACCESS_KEY}"
         sync-interval: 12h
         # Keep 30 daily snapshots
         snapshot-interval: 72h
