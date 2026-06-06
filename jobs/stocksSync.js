@@ -2,8 +2,6 @@ import yahooFinance from 'yahoo-finance2';
 import { getDb } from '../db/connection.js';
 import logger from '../logger.js';
 
-// Suppress noisy validation warnings for Indian stocks
-yahooFinance.setGlobalConfig({ validation: { logErrors: false, logOptionsErrors: false } });
 
 // ─── Minimal CSV parser (handles quoted fields) ───────────────────────────────
 function parseCsvLine(line) {
