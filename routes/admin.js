@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { createReadStream, statSync } from 'fs';
+import { createGzip } from 'zlib';
 import { getDb, getLocalDbPath } from '../db/connection.js';
 import { requireAdmin } from '../middleware/requireAdmin.js';
 import { invalidate, cacheStats, cacheKeys, isCacheEnabled, setCacheEnabled } from '../cache.js';
@@ -666,14 +667,15 @@ router.get('/backup/download', async (req, res) => {
     await getDb().execute('PRAGMA wal_checkpoint(TRUNCATE)');
 
     const stat = statSync(dbPath);
-    const filename = `mf_portfolio_${new Date().toISOString().slice(0, 10)}.db`;
+    const filename = `mf_portfolio_${new Date().toISOString().slice(0, 10)}.db.gz`;
 
-    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Type', 'application/gzip');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', stat.size);
+    // No Content-Length — size unknown after compression
 
-    createReadStream(dbPath).pipe(res);
-    logger.ok(`Admin backup/download: streaming ${dbPath} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
+    const gzip = createGzip({ level: 6 });
+    createReadStream(dbPath).pipe(gzip).pipe(res);
+    logger.ok(`Admin backup/download: streaming gzip ${dbPath} (${(stat.size / 1024 / 1024).toFixed(1)} MB raw)`);
   } catch (err) {
     logger.error('admin/backup/download:', err.message);
     res.status(500).json({ error: err.message });
