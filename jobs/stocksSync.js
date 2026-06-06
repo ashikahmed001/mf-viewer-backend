@@ -84,37 +84,55 @@ async function fetchNiftyIndex(url) {
     .filter(r => r.isin);
 }
 
-// Yahoo Finance v8 chart API — returns market cap in ₹ crores
+// Yahoo Finance v7 quote API — batch up to 50 symbols per request
 async function fetchMarketCaps(symbols) {
-  const results = {};
-  const BATCH_SIZE = 10;
-  const DELAY_MS   = 400; // ~2.5 req/s per batch item
+  const results   = {};
+  const BATCH     = 50;
+  const DELAY_MS  = 1500;
 
-  for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
-    const batch = symbols.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < symbols.length; i += BATCH) {
+    const batch   = symbols.slice(i, i + BATCH);
+    const tickers = batch.map(s => `${s}.NS`).join(',');
 
-    await Promise.allSettled(batch.map(async symbol => {
-      try {
-        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.NS?interval=1d&range=1d`;
+    try {
+      // Try query2 first (less aggressive rate-limiting), fall back to query1
+      for (const host of ['query2', 'query1']) {
+        const url = `https://${host}.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(tickers)}&fields=marketCap,regularMarketPrice`;
         const res = await fetch(url, {
-          headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
-          signal:  AbortSignal.timeout(10_000),
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            'Accept':     'application/json',
+            'Accept-Language': 'en-US,en;q=0.9',
+          },
+          signal: AbortSignal.timeout(15_000),
         });
-        if (!res.ok) return;
-        const data = await res.json();
-        const cap  = data?.chart?.result?.[0]?.meta?.marketCap;
-        if (cap) results[symbol] = Math.round(cap / 1e7); // rupees → crores
-      } catch {
-        // skip failed symbols silently
+
+        if (!res.ok) {
+          logger.dim(`[stocks-sync] Yahoo Finance ${host} returned ${res.status} for batch ${i}–${i + batch.length}`);
+          continue;
+        }
+
+        const data   = await res.json();
+        const quotes = data?.quoteResponse?.result ?? [];
+        for (const q of quotes) {
+          const sym = q.symbol?.replace('.NS', '');
+          if (sym && q.marketCap) {
+            results[sym] = Math.round(q.marketCap / 1e7); // ₹ → crores
+          }
+        }
+        logger.dim(`[stocks-sync] Batch ${i}–${i + batch.length}: got ${quotes.filter(q => q.marketCap).length}/${batch.length} caps`);
+        break; // success — don't try query1
       }
-    }));
+    } catch (e) {
+      logger.dim(`[stocks-sync] Yahoo Finance batch ${i} failed: ${e.message}`);
+    }
 
-    syncState.progress = Math.min(i + BATCH_SIZE, symbols.length);
-
-    if (i + BATCH_SIZE < symbols.length) {
+    syncState.progress = Math.min(i + BATCH, symbols.length);
+    if (i + BATCH < symbols.length) {
       await new Promise(r => setTimeout(r, DELAY_MS));
     }
   }
+
   return results;
 }
 
