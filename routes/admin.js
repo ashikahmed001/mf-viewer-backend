@@ -615,6 +615,92 @@ router.get('/counts', async (req, res) => {
   }
 });
 
+// ─── Backup ───────────────────────────────────────────────────────────────────
+
+// GET /admin/backup/status — last triggered time
+router.get('/backup/status', async (req, res) => {
+  try {
+    const row = await q1(`SELECT value FROM app_settings WHERE key = 'backup_last_triggered'`);
+    res.json({ last_triggered_at: row?.value ?? null });
+  } catch (err) {
+    logger.error('admin/backup/status:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/backup/now — flush WAL so Litestream syncs immediately
+router.post('/backup/now', async (req, res) => {
+  try {
+    // PRAGMA wal_checkpoint(TRUNCATE) flushes all WAL frames to the main DB file
+    // Litestream detects the checkpoint and syncs the updated DB to R2
+    const result = await getDb().execute('PRAGMA wal_checkpoint(TRUNCATE)');
+    const row = result.rows[0];
+    const busy        = Number(row?.busy        ?? 0);
+    const log         = Number(row?.log         ?? 0);
+    const checkpointed = Number(row?.checkpointed ?? 0);
+
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    await getDb().execute({
+      sql:  `INSERT OR REPLACE INTO app_settings (key, value) VALUES ('backup_last_triggered', ?)`,
+      args: [now],
+    });
+
+    logger.ok(`Admin backup: wal_checkpoint(TRUNCATE) busy=${busy} log=${log} checkpointed=${checkpointed}`);
+    res.json({ ok: true, busy, log, checkpointed, triggered_at: now });
+  } catch (err) {
+    logger.error('admin/backup/now:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Stocks List ─────────────────────────────────────────────────────────────
+
+// GET /admin/stocks?q=&cap=&index=&page=&limit=
+router.get('/stocks', async (req, res) => {
+  try {
+    const search  = (req.query.q     || '').trim();
+    const cap     = req.query.cap    || '';   // 'large' | 'mid' | 'small' | 'micro'
+    const index   = req.query.index  || '';   // 'nifty50' | 'nifty500'
+    const page    = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit   = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
+    const offset  = (page - 1) * limit;
+
+    const conditions = [];
+    const args       = [];
+
+    if (search) {
+      conditions.push(`(UPPER(symbol_nse) LIKE UPPER(?) OR UPPER(name) LIKE UPPER(?))`);
+      args.push(`%${search}%`, `%${search}%`);
+    }
+    if (cap)   { conditions.push(`market_cap_cat = ?`); args.push(cap); }
+    if (index === 'nifty50')  { conditions.push(`is_nifty50 = 1`); }
+    if (index === 'nifty500') { conditions.push(`is_nifty500 = 1`); }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const [rows, countRow] = await Promise.all([
+      q(`SELECT isin, symbol_nse, name, sector, industry, market_cap, market_cap_cat,
+                face_value, is_nifty50, is_nifty500, last_synced_at
+         FROM stocks ${where}
+         ORDER BY CASE WHEN market_cap IS NULL THEN 1 ELSE 0 END,
+                  market_cap DESC, name ASC
+         LIMIT ? OFFSET ?`, [...args, limit, offset]),
+      q1(`SELECT COUNT(*) AS total FROM stocks ${where}`, args),
+    ]);
+
+    res.json({
+      rows,
+      total:   Number(countRow?.total ?? 0),
+      page,
+      limit,
+      pages:   Math.ceil(Number(countRow?.total ?? 0) / limit),
+    });
+  } catch (err) {
+    logger.error('admin/stocks:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Stocks Sync ─────────────────────────────────────────────────────────────
 
 // GET /admin/stocks/status — current sync state + DB counts
