@@ -140,9 +140,6 @@ export async function runMigrations() {
 
     INSERT OR IGNORE INTO app_settings (key, value) VALUES ('payments_enabled', 'false');
 
-    -- Add enabled column to existing DBs that predate this migration
-    ALTER TABLE feature_flags ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
-
     CREATE TABLE IF NOT EXISTS user_feature_overrides (
       user_id       TEXT NOT NULL,
       feature_key   TEXT NOT NULL,
@@ -174,5 +171,13 @@ export async function runMigrations() {
     CREATE INDEX IF NOT EXISTS ix_stocks_nifty50    ON stocks (is_nifty50) WHERE is_nifty50 = 1;
     CREATE INDEX IF NOT EXISTS ix_stocks_nifty500   ON stocks (is_nifty500) WHERE is_nifty500 = 1;
   `);
+  // ALTER TABLE statements can't use IF NOT EXISTS — run separately and ignore "duplicate column" errors
+  const safeMigrations = [
+    `ALTER TABLE feature_flags ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1`,
+  ];
+  for (const sql of safeMigrations) {
+    try { await db.execute(sql); } catch { /* column already exists — safe to ignore */ }
+  }
+
   logger.ok('DB migrations applied');
 }
