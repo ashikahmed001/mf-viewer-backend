@@ -83,8 +83,10 @@ export async function getHoldings(extractionId, { sort = 'pct_nav', order = 'des
   const label   = `getHoldings(extraction=${extractionId}, sort=${safe_sort} ${safe_order}, filters: ${filters})`;
 
   return query(label, `
-    SELECT h.id, h.stock_name, h.isin, h.quantity, h.market_value, h.pct_nav, h.industry, h.rating
+    SELECT h.id, h.stock_name, h.isin, h.quantity, h.market_value, h.pct_nav, h.industry, h.rating,
+           s.market_cap_cat
     FROM holdings h
+    LEFT JOIN stocks s ON s.isin = h.isin
     WHERE ${conditions.join(' AND ')}
     ORDER BY h.${safe_sort} ${safe_order}
   `, args);
@@ -96,9 +98,10 @@ export async function getHoldingsSummary(extractionId) {
 
   const [top10Rows, industryRows, totalsRow] = await Promise.all([
     getDb().execute({
-      sql: `SELECT stock_name, isin, pct_nav, market_value, industry
-            FROM holdings WHERE extraction_id = ?
-            ORDER BY pct_nav DESC LIMIT 10`,
+      sql: `SELECT h.stock_name, h.isin, h.pct_nav, h.market_value, h.industry, s.market_cap_cat
+            FROM holdings h LEFT JOIN stocks s ON s.isin = h.isin
+            WHERE h.extraction_id = ?
+            ORDER BY h.pct_nav DESC LIMIT 10`,
       args: [extractionId],
     }),
     getDb().execute({
@@ -381,6 +384,7 @@ export async function getCrossFundAnalysis() {
       h.stock_name,
       h.isin,
       h.industry,
+      MAX(s.market_cap_cat)                                 AS market_cap_cat,
       COUNT(DISTINCT le.fund_id)                            AS fund_count,
       ROUND(AVG(h.pct_nav * es.scale), 4)                  AS avg_pct_nav,
       ROUND(SUM(COALESCE(h.market_value, 0)), 2)           AS total_market_value,
@@ -389,6 +393,7 @@ export async function getCrossFundAnalysis() {
     FROM holdings h
     JOIN latest_exts le  ON le.ext_id = h.extraction_id
     JOIN ext_scale   es  ON es.extraction_id = h.extraction_id
+    LEFT JOIN stocks s   ON s.isin = h.isin
     WHERE h.stock_name IS NOT NULL
       AND h.isin IS NOT NULL
       AND h.pct_nav IS NOT NULL
@@ -440,11 +445,13 @@ export async function getRisingConviction(lookback = 6, direction = 'rising') {
       h.stock_name,
       h.isin,
       h.industry,
+      s.market_cap_cat,
       ROUND(h.pct_nav * fs.scale, 4)   AS pct
     FROM holdings h
     JOIN recent_months rm ON rm.ext_id = h.extraction_id
     JOIN fund_scale fs    ON fs.fund_id = rm.fund_id
     JOIN funds f          ON f.id = rm.fund_id
+    LEFT JOIN stocks s    ON s.isin = h.isin
     WHERE rm.rn <= ?
       AND h.pct_nav IS NOT NULL
       AND h.isin IS NOT NULL
@@ -455,7 +462,7 @@ export async function getRisingConviction(lookback = 6, direction = 'rising') {
   for (const row of rows) {
     const key = `${row.fund_id}:${row.isin}`;
     if (!map.has(key)) {
-      map.set(key, { fund_id: row.fund_id, fund_name: row.fund_name, stock_name: row.stock_name, isin: row.isin, industry: row.industry, months: [] });
+      map.set(key, { fund_id: row.fund_id, fund_name: row.fund_name, stock_name: row.stock_name, isin: row.isin, industry: row.industry, market_cap_cat: row.market_cap_cat, months: [] });
     }
     map.get(key).months.push({ month: row.report_month, pct: row.pct });
   }
@@ -490,11 +497,12 @@ export async function getRisingConviction(lookback = 6, direction = 'rising') {
     if (direction === 'losing' && gain >= 0) continue;
 
     results.push({
-      fund_id:      entry.fund_id,
-      fund_name:    entry.fund_name,
-      stock_name:   entry.stock_name,
-      isin:         entry.isin,
-      industry:     entry.industry,
+      fund_id:        entry.fund_id,
+      fund_name:      entry.fund_name,
+      stock_name:     entry.stock_name,
+      isin:           entry.isin,
+      industry:       entry.industry,
+      market_cap_cat: entry.market_cap_cat,
       streak,
       up_count:     upCount,
       window_count: months.length,
@@ -535,12 +543,14 @@ export async function getFeedData(lookback = 6) {
     )
     SELECT rm.fund_id, f.name AS fund_name, rm.report_month,
            h.stock_name, h.isin, h.industry,
+           s.market_cap_cat,
            ROUND(h.pct_nav * fs.scale, 4) AS pct,
            h.quantity, h.market_value
     FROM holdings h
     JOIN recent rm     ON rm.ext_id  = h.extraction_id
     JOIN fund_scale fs ON fs.fund_id = rm.fund_id
     JOIN funds f       ON f.id       = rm.fund_id
+    LEFT JOIN stocks s ON s.isin     = h.isin
     WHERE rm.rn <= ?
       AND h.pct_nav  IS NOT NULL
       AND h.isin     IS NOT NULL
@@ -558,6 +568,7 @@ export async function getFeedData(lookback = 6) {
     if (!fd.months.has(row.report_month)) fd.months.set(row.report_month, new Map());
     fd.months.get(row.report_month).set(row.isin, {
       stock_name: row.stock_name, isin: row.isin, industry: row.industry,
+      market_cap_cat: row.market_cap_cat,
       pct: row.pct, quantity: row.quantity, market_value: row.market_value,
     });
   }
@@ -1002,10 +1013,11 @@ export async function getMonthlyDiff(fundId, monthA, monthB) {
 export async function searchStocks(q) {
   const like = `%${q}%`;
   return query(`searchStocks("${q}")`, `
-    SELECT h.isin, h.stock_name, h.industry,
+    SELECT h.isin, h.stock_name, h.industry, MAX(s.market_cap_cat) AS market_cap_cat,
       COUNT(DISTINCT e.fund_id) AS fund_count
     FROM holdings h
     JOIN extractions e ON h.extraction_id = e.id
+    LEFT JOIN stocks s ON s.isin = h.isin
     WHERE (h.stock_name LIKE ? OR h.isin LIKE ?)
       AND h.isin IS NOT NULL
       AND h.isin NOT LIKE 'IN002%' AND h.isin NOT LIKE 'INCBLO%' AND h.isin NOT LIKE 'INF%'
@@ -1092,12 +1104,13 @@ export async function getAllFundsNewEntries() {
       JOIN extractions e ON h.extraction_id = e.id
       JOIN prev         p ON p.fund_id = e.fund_id AND e.report_month = p.report_month
     )
-    SELECT lh.isin, lh.stock_name, lh.industry,
+    SELECT lh.isin, lh.stock_name, lh.industry, MAX(s.market_cap_cat) AS market_cap_cat,
            COUNT(DISTINCT lh.fund_id)               AS fund_count,
            ROUND(SUM(lh.pct_nav), 4)                AS total_pct,
            GROUP_CONCAT(lh.fund_name || '|' || lh.pct_nav, ';;') AS fund_details
     FROM latest_h lh
     LEFT JOIN prev_h ph ON ph.isin = lh.isin AND ph.fund_id = lh.fund_id
+    LEFT JOIN stocks s  ON s.isin  = lh.isin
     WHERE ph.isin IS NULL
     GROUP BY lh.isin, lh.stock_name, lh.industry
     ORDER BY fund_count DESC, total_pct DESC
