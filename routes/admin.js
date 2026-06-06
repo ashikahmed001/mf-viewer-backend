@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getDb } from '../db/connection.js';
+import { createReadStream, statSync } from 'fs';
+import { getDb, getLocalDbPath } from '../db/connection.js';
 import { requireAdmin } from '../middleware/requireAdmin.js';
 import { invalidate, cacheStats, cacheKeys, isCacheEnabled, setCacheEnabled } from '../cache.js';
 import logger from '../logger.js';
@@ -649,6 +650,32 @@ router.post('/backup/now', async (req, res) => {
     res.json({ ok: true, busy, log, checkpointed, triggered_at: now });
   } catch (err) {
     logger.error('admin/backup/now:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/backup/download — checkpoint WAL then stream the .db file
+router.get('/backup/download', async (req, res) => {
+  try {
+    const dbPath = getLocalDbPath();
+    if (!dbPath) {
+      return res.status(400).json({ error: 'Database download is only available in local SQLite mode' });
+    }
+
+    // Flush WAL before reading so the file is consistent
+    await getDb().execute('PRAGMA wal_checkpoint(TRUNCATE)');
+
+    const stat = statSync(dbPath);
+    const filename = `mf_portfolio_${new Date().toISOString().slice(0, 10)}.db`;
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', stat.size);
+
+    createReadStream(dbPath).pipe(res);
+    logger.ok(`Admin backup/download: streaming ${dbPath} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
+  } catch (err) {
+    logger.error('admin/backup/download:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

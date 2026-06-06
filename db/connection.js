@@ -9,6 +9,11 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let client;
+let _localDbPath = null;
+
+export function getLocalDbPath() {
+  return _localDbPath; // null if running against Turso
+}
 
 export function getDb() {
   if (!client) {
@@ -18,6 +23,7 @@ export function getDb() {
 
     if (useLocal) {
       const dbPath = path.resolve(__dirname, '..', process.env.DB_PATH || './data/mf_portfolio');
+      _localDbPath = dbPath;
       url = `file:${dbPath}`;
       logger.db(`Using local SQLite  ${dbPath}`);
     } else {
