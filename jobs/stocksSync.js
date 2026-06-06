@@ -1,7 +1,5 @@
-import yahooFinance from 'yahoo-finance2';
 import { getDb } from '../db/connection.js';
 import logger from '../logger.js';
-
 
 // ─── Minimal CSV parser (handles quoted fields) ───────────────────────────────
 function parseCsvLine(line) {
@@ -35,7 +33,7 @@ function parseCsv(text) {
 // ─── Sync state (in-memory, reset on restart) ─────────────────────────────────
 export let syncState = {
   status:      'idle',   // 'idle' | 'running' | 'done' | 'error'
-  phase:       null,     // 'fetching' | 'upserting' | 'enriching' | 'done'
+  phase:       null,     // 'fetching' | 'upserting' | 'categorising' | 'done'
   progress:    0,
   total:       0,
   message:     '',
@@ -86,44 +84,19 @@ async function fetchNiftyIndex(url) {
     .filter(r => r.isin);
 }
 
-// Fetch market caps via yahoo-finance2 (handles auth/crumb internally)
-async function fetchMarketCaps(symbols) {
-  const results  = {};
-  const BATCH    = 20;
-  const DELAY_MS = 800;
-
-  for (let i = 0; i < symbols.length; i += BATCH) {
-    const batch = symbols.slice(i, i + BATCH);
-
-    await Promise.allSettled(batch.map(async symbol => {
-      try {
-        const quote = await yahooFinance.quote(`${symbol}.NS`, { fields: ['marketCap'] });
-        if (quote?.marketCap) {
-          results[symbol] = Math.round(quote.marketCap / 1e7); // ₹ → crores
-        }
-      } catch {
-        // skip — symbol may not exist on Yahoo or be delisted
-      }
-    }));
-
-    const hits = batch.filter(s => results[s]).length;
-    logger.dim(`[stocks-sync] Batch ${i}–${i + batch.length}: ${hits}/${batch.length} caps`);
-    syncState.progress = Math.min(i + BATCH, symbols.length);
-
-    if (i + BATCH < symbols.length) {
-      await new Promise(r => setTimeout(r, DELAY_MS));
-    }
-  }
-
-  return results;
-}
-
-function capCategory(crores) {
-  if (!crores) return null;
-  if (crores >= 20000) return 'large';
-  if (crores >=  5000) return 'mid';
-  if (crores >=   500) return 'small';
-  return 'micro';
+// ─── SEBI-standard cap categorisation via NIFTY index membership ─────────────
+// SEBI defines:  Top 100 by mcap = large,  101–250 = mid,  251+ = small
+// NSE indices reflect this ranking, so membership is authoritative.
+//
+//   NIFTY 100      → large cap
+//   NIFTY Midcap 150 (101–250) → mid cap
+//   NIFTY Smallcap 250 (251–500) → small cap
+//   Listed but outside NIFTY 500 → micro cap
+function assignCapCategory(isin, nifty100Set, midcap150Set, smallcap250Set) {
+  if (nifty100Set.has(isin))    return 'large';
+  if (midcap150Set.has(isin))   return 'mid';
+  if (smallcap250Set.has(isin)) return 'small';
+  return null; // outside NIFTY 500 — leave as null (micro / unknown)
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -158,81 +131,70 @@ async function _doSync() {
   logger.ok(`[stocks-sync] ${equities.length} EQ-series stocks loaded`);
 
   // ── Phase 2: NIFTY index constituents ────────────────────────────────────
-  syncState.message = 'Fetching NIFTY 50 & 500 constituents…';
-  logger.dim('[stocks-sync] Fetching NIFTY 50 & 500…');
+  syncState.message = 'Fetching NIFTY index constituents…';
+  logger.dim('[stocks-sync] Fetching NIFTY 50, 100, 500, Midcap 150, Smallcap 250…');
 
-  const [nifty50, nifty500] = await Promise.all([
+  const [nifty50, nifty100, nifty500, midcap150, smallcap250] = await Promise.all([
     fetchNiftyIndex('https://archives.nseindia.com/content/indices/ind_nifty50list.csv'),
+    fetchNiftyIndex('https://archives.nseindia.com/content/indices/ind_nifty100list.csv'),
     fetchNiftyIndex('https://archives.nseindia.com/content/indices/ind_nifty500list.csv'),
+    fetchNiftyIndex('https://archives.nseindia.com/content/indices/ind_niftymidcap150list.csv'),
+    fetchNiftyIndex('https://archives.nseindia.com/content/indices/ind_niftysmallcap250list.csv'),
   ]);
-  logger.ok(`[stocks-sync] NIFTY 50: ${nifty50.length}  NIFTY 500: ${nifty500.length}`);
+  logger.ok(`[stocks-sync] N50:${nifty50.length} N100:${nifty100.length} N500:${nifty500.length} Mid150:${midcap150.length} Small250:${smallcap250.length}`);
 
-  const nifty50Set  = new Set(nifty50.map(r => r.isin));
-  const nifty500Set = new Set(nifty500.map(r => r.isin));
+  const nifty50Set    = new Set(nifty50.map(r => r.isin));
+  const nifty100Set   = new Set(nifty100.map(r => r.isin));
+  const nifty500Set   = new Set(nifty500.map(r => r.isin));
+  const midcap150Set  = new Set(midcap150.map(r => r.isin));
+  const smallcap250Set = new Set(smallcap250.map(r => r.isin));
 
-  // Build sector map — NIFTY 500 has best coverage, NIFTY 50 fills gaps
+  // Build sector/industry map — NIFTY 500 has best coverage
   const sectorMap = {};
-  for (const r of [...nifty500, ...nifty50]) {
+  for (const r of [...nifty500, ...nifty100, ...nifty50]) {
     if (r.isin && r.industry) sectorMap[r.isin] = r.industry;
   }
 
-  // ── Phase 3: Upsert all stocks ────────────────────────────────────────────
-  syncState.phase   = 'upserting';
-  syncState.message = `Upserting ${equities.length} stocks into DB…`;
-  syncState.total   = equities.length;
+  // ── Phase 3: Upsert all stocks with cap category ──────────────────────────
+  syncState.phase    = 'upserting';
+  syncState.message  = `Upserting ${equities.length} stocks into DB…`;
+  syncState.total    = equities.length;
   syncState.progress = 0;
 
   const BATCH = 100;
   for (let i = 0; i < equities.length; i += BATCH) {
     const chunk = equities.slice(i, i + BATCH);
-    const stmts = chunk.map(s => ({
-      sql: `
-        INSERT INTO stocks (isin, symbol_nse, name, sector, industry, face_value, is_nifty50, is_nifty500, last_synced_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(isin) DO UPDATE SET
-          symbol_nse     = excluded.symbol_nse,
-          name           = excluded.name,
-          sector         = COALESCE(excluded.sector, stocks.sector),
-          industry       = COALESCE(excluded.industry, stocks.industry),
-          face_value     = excluded.face_value,
-          is_nifty50     = excluded.is_nifty50,
-          is_nifty500    = excluded.is_nifty500,
-          last_synced_at = excluded.last_synced_at
-      `,
-      args: [
-        s.isin, s.symbol_nse, s.name,
-        sectorMap[s.isin] ?? null,
-        sectorMap[s.isin] ?? null,
-        s.face_value,
-        nifty50Set.has(s.isin)  ? 1 : 0,
-        nifty500Set.has(s.isin) ? 1 : 0,
-      ],
-    }));
+    const stmts = chunk.map(s => {
+      const capCat = assignCapCategory(s.isin, nifty100Set, midcap150Set, smallcap250Set);
+      return {
+        sql: `
+          INSERT INTO stocks (isin, symbol_nse, name, sector, industry, face_value,
+                              is_nifty50, is_nifty500, market_cap_cat, last_synced_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+          ON CONFLICT(isin) DO UPDATE SET
+            symbol_nse     = excluded.symbol_nse,
+            name           = excluded.name,
+            sector         = COALESCE(excluded.sector, stocks.sector),
+            industry       = COALESCE(excluded.industry, stocks.industry),
+            face_value     = excluded.face_value,
+            is_nifty50     = excluded.is_nifty50,
+            is_nifty500    = excluded.is_nifty500,
+            market_cap_cat = excluded.market_cap_cat,
+            last_synced_at = excluded.last_synced_at
+        `,
+        args: [
+          s.isin, s.symbol_nse, s.name,
+          sectorMap[s.isin] ?? null,
+          sectorMap[s.isin] ?? null,
+          s.face_value,
+          nifty50Set.has(s.isin)  ? 1 : 0,
+          nifty500Set.has(s.isin) ? 1 : 0,
+          capCat,
+        ],
+      };
+    });
     await db.batch(stmts, 'write');
     syncState.progress = Math.min(i + BATCH, equities.length);
-  }
-
-  // ── Phase 4: Enrich NIFTY 500 with market cap via Yahoo Finance ───────────
-  const nifty500Symbols = equities
-    .filter(s => nifty500Set.has(s.isin))
-    .map(s => s.symbol_nse);
-
-  syncState.phase   = 'enriching';
-  syncState.message = `Fetching market caps for ${nifty500Symbols.length} NIFTY 500 stocks…`;
-  syncState.total   = nifty500Symbols.length;
-  syncState.progress = 0;
-
-  logger.dim(`[stocks-sync] Enriching ${nifty500Symbols.length} symbols via Yahoo Finance…`);
-  const caps = await fetchMarketCaps(nifty500Symbols);
-  logger.ok(`[stocks-sync] Got market caps for ${Object.keys(caps).length} / ${nifty500Symbols.length} symbols`);
-
-  // Write market caps in batches
-  const capStmts = Object.entries(caps).map(([sym, cap]) => ({
-    sql:  `UPDATE stocks SET market_cap = ?, market_cap_cat = ?, last_synced_at = datetime('now') WHERE symbol_nse = ?`,
-    args: [cap, capCategory(cap), sym],
-  }));
-  for (let i = 0; i < capStmts.length; i += BATCH) {
-    await db.batch(capStmts.slice(i, i + BATCH), 'write');
   }
 
   // ── Finalise ──────────────────────────────────────────────────────────────
@@ -240,7 +202,7 @@ async function _doSync() {
     `SELECT COUNT(*) AS total,
             SUM(is_nifty50)  AS n50,
             SUM(is_nifty500) AS n500,
-            SUM(CASE WHEN market_cap IS NOT NULL THEN 1 ELSE 0 END) AS ncap
+            SUM(CASE WHEN market_cap_cat IS NOT NULL THEN 1 ELSE 0 END) AS ncap
      FROM stocks`
   )).rows[0];
 
@@ -258,13 +220,12 @@ async function _doSync() {
     },
   };
 
-  // Persist last-sync timestamp
   await db.execute({
     sql:  `INSERT OR REPLACE INTO app_settings (key, value) VALUES ('stocks_last_sync', datetime('now'))`,
     args: [],
   });
 
   logger.ok(
-    `[stocks-sync] Done — total=${countRow.total}  nifty50=${countRow.n50}  nifty500=${countRow.n500}  caps=${countRow.ncap}`
+    `[stocks-sync] Done — total=${countRow.total}  nifty50=${countRow.n50}  nifty500=${countRow.n500}  categorised=${countRow.ncap}`
   );
 }
