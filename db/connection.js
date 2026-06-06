@@ -152,6 +152,27 @@ export async function runMigrations() {
       updated_at    DATETIME NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (user_id, feature_key)
     );
+
+    CREATE TABLE IF NOT EXISTS stocks (
+      isin           TEXT PRIMARY KEY,
+      symbol_nse     TEXT,
+      symbol_bse     TEXT,
+      name           TEXT NOT NULL,
+      sector         TEXT,
+      industry       TEXT,
+      market_cap     REAL,        -- in ₹ crores
+      market_cap_cat TEXT,        -- 'large' | 'mid' | 'small' | 'micro'
+      face_value     REAL,
+      is_nifty50     INTEGER NOT NULL DEFAULT 0,
+      is_nifty500    INTEGER NOT NULL DEFAULT 0,
+      is_sensex      INTEGER NOT NULL DEFAULT 0,
+      last_synced_at DATETIME
+    );
+
+    CREATE INDEX IF NOT EXISTS ix_stocks_symbol_nse ON stocks (symbol_nse);
+    CREATE INDEX IF NOT EXISTS ix_stocks_isin       ON stocks (isin);
+    CREATE INDEX IF NOT EXISTS ix_stocks_nifty50    ON stocks (is_nifty50) WHERE is_nifty50 = 1;
+    CREATE INDEX IF NOT EXISTS ix_stocks_nifty500   ON stocks (is_nifty500) WHERE is_nifty500 = 1;
   `);
   logger.ok('DB migrations applied');
 }

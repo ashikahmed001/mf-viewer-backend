@@ -59,8 +59,14 @@ const morganFmt = '\x1b[34m\x1b[1mHTTP \x1b[0m  \x1b[2m:date[iso]\x1b[0m'
 app.use(morgan(morganFmt));
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
+// Capacitor iOS apps send requests from capacitor://localhost
+const CAPACITOR_ORIGINS = ['capacitor://localhost', 'ionic://localhost', 'http://localhost'];
+const allowedOrigins = process.env.FRONTEND_URL
+  ? [...process.env.FRONTEND_URL.split(','), ...CAPACITOR_ORIGINS]
+  : null; // null = allow all in dev
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : '*',
+  origin: allowedOrigins ?? true,
   credentials: true,
 }));
 app.use(express.json());

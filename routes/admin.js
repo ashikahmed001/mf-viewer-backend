@@ -4,6 +4,7 @@ import { requireAdmin } from '../middleware/requireAdmin.js';
 import { invalidate, cacheStats, cacheKeys, isCacheEnabled, setCacheEnabled } from '../cache.js';
 import logger from '../logger.js';
 import uploadRouter from './upload.js';
+import { syncState, runStocksSync } from '../jobs/stocksSync.js';
 
 const router = Router();
 
@@ -611,6 +612,46 @@ router.get('/counts', async (req, res) => {
     logger.error('admin/counts:', err.message);
     // Return zeros on error so the UI still loads
     res.json({ isin: 0, names: 0, nav_unmapped: 0, continuity: 0 });
+  }
+});
+
+// ─── Stocks Sync ─────────────────────────────────────────────────────────────
+
+// GET /admin/stocks/status — current sync state + DB counts
+router.get('/stocks/status', async (req, res) => {
+  try {
+    const [lastSyncRow, countRow] = await Promise.all([
+      q1(`SELECT value FROM app_settings WHERE key = 'stocks_last_sync'`),
+      q1(`SELECT COUNT(*) AS total,
+                 SUM(is_nifty50)  AS n50,
+                 SUM(is_nifty500) AS n500,
+                 SUM(CASE WHEN market_cap IS NOT NULL THEN 1 ELSE 0 END) AS ncap
+          FROM stocks`),
+    ]);
+    res.json({
+      sync:          syncState,
+      last_synced_at: lastSyncRow?.value ?? null,
+      db_counts: {
+        total:           Number(countRow?.total  ?? 0),
+        nifty50:         Number(countRow?.n50    ?? 0),
+        nifty500:        Number(countRow?.n500   ?? 0),
+        with_market_cap: Number(countRow?.ncap   ?? 0),
+      },
+    });
+  } catch (err) {
+    logger.error('admin/stocks/status:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/stocks/sync — trigger on-demand sync (fires async, returns immediately)
+router.post('/stocks/sync', (req, res) => {
+  try {
+    runStocksSync();
+    res.json({ started: true });
+  } catch (err) {
+    // "Sync already in progress" comes back as 409
+    res.status(409).json({ error: err.message });
   }
 });
 
