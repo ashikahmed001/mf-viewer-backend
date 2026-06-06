@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y wget ca-certificates python3 make g++ &
 WORKDIR /app
 
 # Install dependencies
-COPY package*.json ./
+COPY package.json ./
 RUN npm install --omit=dev
 
 # Copy app + config
