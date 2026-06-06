@@ -1,5 +1,9 @@
+import yahooFinance from 'yahoo-finance2';
 import { getDb } from '../db/connection.js';
 import logger from '../logger.js';
+
+// Suppress noisy validation warnings for Indian stocks
+yahooFinance.setGlobalConfig({ validation: { logErrors: false, logOptionsErrors: false } });
 
 // ─── Minimal CSV parser (handles quoted fields) ───────────────────────────────
 function parseCsvLine(line) {
@@ -84,50 +88,30 @@ async function fetchNiftyIndex(url) {
     .filter(r => r.isin);
 }
 
-// Yahoo Finance v7 quote API — batch up to 50 symbols per request
+// Fetch market caps via yahoo-finance2 (handles auth/crumb internally)
 async function fetchMarketCaps(symbols) {
-  const results   = {};
-  const BATCH     = 50;
-  const DELAY_MS  = 1500;
+  const results  = {};
+  const BATCH    = 20;
+  const DELAY_MS = 800;
 
   for (let i = 0; i < symbols.length; i += BATCH) {
-    const batch   = symbols.slice(i, i + BATCH);
-    const tickers = batch.map(s => `${s}.NS`).join(',');
+    const batch = symbols.slice(i, i + BATCH);
 
-    try {
-      // Try query2 first (less aggressive rate-limiting), fall back to query1
-      for (const host of ['query2', 'query1']) {
-        const url = `https://${host}.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(tickers)}&fields=marketCap,regularMarketPrice`;
-        const res = await fetch(url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-            'Accept':     'application/json',
-            'Accept-Language': 'en-US,en;q=0.9',
-          },
-          signal: AbortSignal.timeout(15_000),
-        });
-
-        if (!res.ok) {
-          logger.dim(`[stocks-sync] Yahoo Finance ${host} returned ${res.status} for batch ${i}–${i + batch.length}`);
-          continue;
+    await Promise.allSettled(batch.map(async symbol => {
+      try {
+        const quote = await yahooFinance.quote(`${symbol}.NS`, { fields: ['marketCap'] });
+        if (quote?.marketCap) {
+          results[symbol] = Math.round(quote.marketCap / 1e7); // ₹ → crores
         }
-
-        const data   = await res.json();
-        const quotes = data?.quoteResponse?.result ?? [];
-        for (const q of quotes) {
-          const sym = q.symbol?.replace('.NS', '');
-          if (sym && q.marketCap) {
-            results[sym] = Math.round(q.marketCap / 1e7); // ₹ → crores
-          }
-        }
-        logger.dim(`[stocks-sync] Batch ${i}–${i + batch.length}: got ${quotes.filter(q => q.marketCap).length}/${batch.length} caps`);
-        break; // success — don't try query1
+      } catch {
+        // skip — symbol may not exist on Yahoo or be delisted
       }
-    } catch (e) {
-      logger.dim(`[stocks-sync] Yahoo Finance batch ${i} failed: ${e.message}`);
-    }
+    }));
 
+    const hits = batch.filter(s => results[s]).length;
+    logger.dim(`[stocks-sync] Batch ${i}–${i + batch.length}: ${hits}/${batch.length} caps`);
     syncState.progress = Math.min(i + BATCH, symbols.length);
+
     if (i + BATCH < symbols.length) {
       await new Promise(r => setTimeout(r, DELAY_MS));
     }
