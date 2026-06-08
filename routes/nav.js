@@ -7,6 +7,21 @@ import { runNavSync } from '../jobs/navSync.js';
 const router = Router();
 const MFAPI = 'https://api.mfapi.in/mf';
 
+// ─── All-schemes cache (refreshed every 24 h) ─────────────────────────────────
+let schemesCache   = null;
+let schemesCachedAt = 0;
+const SCHEMES_TTL  = 24 * 60 * 60 * 1000; // 24 hours
+
+async function getAllSchemes() {
+  if (schemesCache && Date.now() - schemesCachedAt < SCHEMES_TTL) return schemesCache;
+  logger.info('Fetching full AMFI scheme list from mfapi.in…');
+  const raw = await fetchJson(MFAPI);                          // returns [{schemeCode, schemeName}]
+  schemesCache   = raw.map(m => ({ scheme_code: String(m.schemeCode), scheme_name: m.schemeName }));
+  schemesCachedAt = Date.now();
+  logger.info(`AMFI cache loaded — ${schemesCache.length} schemes`);
+  return schemesCache;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function fetchJson(url) {
@@ -48,6 +63,16 @@ function nameSimilarity(fundName, schemeName) {
 
   return score;
 }
+
+// ─── GET /api/nav/schemes/all — full AMFI list for client-side search ────────
+router.get('/schemes/all', requireAdmin, async (req, res) => {
+  try {
+    const schemes = await getAllSchemes();
+    res.json(schemes);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ─── GET /api/nav/search?q= — search mfapi.in and return scored results ───────
 router.get('/search', requireAdmin, async (req, res) => {
