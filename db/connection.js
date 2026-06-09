@@ -145,6 +145,7 @@ export async function runMigrations() {
     );
 
     INSERT OR IGNORE INTO app_settings (key, value) VALUES ('payments_enabled', 'false');
+    INSERT OR IGNORE INTO app_settings (key, value) VALUES ('cache_enabled',    'true');
 
     CREATE TABLE IF NOT EXISTS user_feature_overrides (
       user_id       TEXT NOT NULL,

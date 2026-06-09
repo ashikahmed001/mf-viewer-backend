@@ -9,6 +9,7 @@ import { clerkMiddleware } from '@clerk/express';
 import logger from './logger.js';
 import { runMigrations } from './db/connection.js';
 import { scheduleNavSync } from './jobs/navSync.js';
+import { initCacheFromDb } from './cache.js';
 import { requireAuth } from './middleware/requireAuth.js';
 import navRouter from './routes/nav.js';
 import billingRouter from './routes/billing.js';
@@ -112,6 +113,7 @@ app.use((err, req, res, next) => {
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 runMigrations()
+  .then(() => initCacheFromDb())
   .then(() => {
     app.listen(PORT, '0.0.0.0', () => {
       logger.banner(PORT, DB_PATH);

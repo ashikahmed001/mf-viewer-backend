@@ -775,12 +775,20 @@ router.get('/cache/enabled', (req, res) => {
   res.json({ enabled: isCacheEnabled() });
 });
 
-// PATCH /admin/cache/enabled — toggle cache on/off
-router.patch('/cache/enabled', (req, res) => {
+// PATCH /admin/cache/enabled — toggle cache on/off (persisted to DB)
+router.patch('/cache/enabled', async (req, res) => {
   const { enabled } = req.body;
   if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be boolean' });
   setCacheEnabled(enabled);
-  logger.ok(`Admin: cache ${enabled ? 'ENABLED' : 'DISABLED'}`);
+  try {
+    await getDb().execute({
+      sql:  `INSERT OR REPLACE INTO app_settings (key, value) VALUES ('cache_enabled', ?)`,
+      args: [enabled ? 'true' : 'false'],
+    });
+  } catch (e) {
+    logger.warn('Admin: failed to persist cache_enabled to DB:', e.message);
+  }
+  logger.ok(`Admin: cache ${enabled ? 'ENABLED' : 'DISABLED'} (persisted)`);
   res.json({ enabled: isCacheEnabled() });
 });
 

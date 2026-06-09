@@ -29,6 +29,25 @@ let cacheEnabled = true;
 export function isCacheEnabled()          { return cacheEnabled; }
 export function setCacheEnabled(val)      { cacheEnabled = !!val; if (!val) { store.clear(); inflight.clear(); } }
 
+/**
+ * Read the persisted cache_enabled setting from DB and apply it.
+ * Call once at boot after runMigrations().
+ */
+export async function initCacheFromDb() {
+  try {
+    const { getDb } = await import('./db/connection.js');
+    const { rows } = await getDb().execute(
+      `SELECT value FROM app_settings WHERE key = 'cache_enabled'`
+    );
+    if (rows.length) {
+      setCacheEnabled(rows[0].value !== 'false');
+    }
+  } catch (e) {
+    // Non-fatal — fall back to default (enabled)
+    console.warn('[cache] initCacheFromDb failed, defaulting to enabled:', e.message);
+  }
+}
+
 // ─── Store ───────────────────────────────────────────────────────────────────
 const store    = new Map();
 const inflight = new Map(); // key → Promise  (single-flight coalescing)
