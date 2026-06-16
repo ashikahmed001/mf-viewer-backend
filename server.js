@@ -19,6 +19,7 @@ import fundsRouter from './routes/funds.js';
 import extractionsRouter from './routes/extractions.js';
 import holdingsRouter from './routes/holdings.js';
 import feedRouter from './routes/feed.js';
+import trendingRouter from './routes/trending.js';
 
 dotenv.config();
 
@@ -95,6 +96,7 @@ app.use('/api/extractions',  requireAuth, extractionsRouter);
 app.use('/api/extractions',  requireAuth, holdingsRouter);
 app.use('/api/holdings',     requireAuth, holdingsRouter);
 app.use('/api/nav',          requireAuth, navRouter);
+app.use('/api/trending',    requireAuth, trendingRouter);
 app.use('/api/billing',     billingRouter);   // webhook is public; other routes do auth internally
 app.use('/api/features',    featuresRouter);  // GET is public; PATCH is admin-only
 
