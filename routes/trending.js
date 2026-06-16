@@ -137,9 +137,17 @@ async function computeTrending() {
       // Category from meta (e.g. "Equity Scheme - Large Cap Fund")
       const meta = data.meta ?? {};
       const rawCategory = meta.scheme_category ?? 'Other';
+
+      // Post-filter: drop anything that's debt/liquid/money-market by category
+      const rawCatLower = rawCategory.toLowerCase();
+      const EXCLUDE_CATS = ['debt scheme', 'liquid', 'overnight', 'money market', 'gilt',
+        'arbitrage', 'fund of funds', 'exchange traded', 'fixed maturity', 'interval',
+        'capital protection', 'infrastructure debt'];
+      if (EXCLUDE_CATS.some(kw => rawCatLower.includes(kw))) return null;
+
       // Shorten: "Equity Scheme - Large Cap Fund" → "Large Cap"
       const category = rawCategory
-        .replace(/^(Equity Scheme|Hybrid Scheme|Solution Oriented|Other Scheme)\s*-\s*/i, '')
+        .replace(/^(Equity Scheme|Hybrid Scheme|Solution Oriented Scheme|Other Scheme)\s*-\s*/i, '')
         .replace(/ Fund$/i, '')
         .replace(/ Scheme$/i, '')
         .trim() || 'Other';
@@ -170,17 +178,11 @@ async function computeTrending() {
 
   logger.info(`trending — computed returns for ${funds.length} funds`);
 
-  // Sort buckets
-  const byScore = [...funds].sort((a, b) => b.score - a.score).slice(0, 100);
-  const by1m    = [...funds].filter(f => f.returns['1m'] != null).sort((a, b) => b.returns['1m'] - a.returns['1m']).slice(0, 100);
-  const by3m    = [...funds].filter(f => f.returns['3m'] != null).sort((a, b) => b.returns['3m'] - a.returns['3m']).slice(0, 100);
-  const by6m    = [...funds].filter(f => f.returns['6m'] != null).sort((a, b) => b.returns['6m'] - a.returns['6m']).slice(0, 100);
-  const by1y    = [...funds].filter(f => f.returns['1y'] != null).sort((a, b) => b.returns['1y'] - a.returns['1y']).slice(0, 100);
-
   // Unique categories for filter chips
   const categories = [...new Set(funds.map(f => f.category))].sort();
 
-  return { byScore, by1m, by3m, by6m, by1y, categories, total: funds.length, computedAt: new Date().toISOString() };
+  // Return all funds unsorted — frontend handles sorting & filtering per tab
+  return { funds, categories, total: funds.length, computedAt: new Date().toISOString() };
 }
 
 // ─── GET /api/trending ────────────────────────────────────────────────────────
