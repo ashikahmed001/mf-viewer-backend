@@ -128,11 +128,53 @@ async function computeTrending() {
       // Skip funds with no 1M return (too new or data gap)
       if (returns['1m'] == null) return null;
 
-      // Trend score: recency-weighted (1M × 0.4 + 3M × 0.35 + 6M × 0.25)
+      // ── Score 1: Momentum ──────────────────────────────────────────────────
+      // Recency-weighted return (1M × 0.4 + 3M × 0.35 + 6M × 0.25)
       const r1m = returns['1m'] ?? 0;
       const r3m = returns['3m'] ?? r1m;
       const r6m = returns['6m'] ?? r3m;
-      const score = +(r1m * 0.4 + r3m * 0.35 + r6m * 0.25).toFixed(3);
+      const rawMomentum = r1m * 0.4 + r3m * 0.35 + r6m * 0.25;
+
+      // ── Monthly returns for consistency + risk-adj ─────────────────────────
+      const monthlyRets = [];
+      for (let m = 1; m <= 12; m++) {
+        const start = navOnDate(navData, daysAgo(m * 30));
+        const end   = navOnDate(navData, daysAgo((m - 1) * 30));
+        if (start != null && end != null && start > 0) {
+          monthlyRets.push((end - start) / start * 100);
+        }
+      }
+
+      // ── Score 2: Acceleration ──────────────────────────────────────────────
+      // Annualised 3M return minus 1Y return — picking-up-pace signal
+      const ann3m = returns['3m'] != null
+        ? (Math.pow(1 + returns['3m'] / 100, 365 / 90) - 1) * 100
+        : null;
+      const rawAcceleration = (ann3m != null && returns['1y'] != null)
+        ? ann3m - returns['1y']
+        : null;
+
+      // ── Score 3: Consistency ───────────────────────────────────────────────
+      // % of the last 12 months with positive returns → raw 0-100
+      const rawConsistency = monthlyRets.length >= 6
+        ? (monthlyRets.filter(r => r > 0).length / monthlyRets.length) * 100
+        : null;
+
+      // ── Score 4: Recovery ──────────────────────────────────────────────────
+      // 1M gain minus any 6M drawdown (rewards bounce-back)
+      const rawRecovery = returns['1m'] != null
+        ? returns['1m'] - Math.min(0, returns['6m'] ?? 0)
+        : null;
+
+      // ── Score 5: Risk-adjusted ─────────────────────────────────────────────
+      // 6M return / stddev of monthly returns (Sharpe-like)
+      let rawRiskAdj = null;
+      if (monthlyRets.length >= 6 && returns['6m'] != null) {
+        const mean = monthlyRets.reduce((s, r) => s + r, 0) / monthlyRets.length;
+        const variance = monthlyRets.reduce((s, r) => s + (r - mean) ** 2, 0) / monthlyRets.length;
+        const stddev = Math.sqrt(variance);
+        if (stddev > 0.01) rawRiskAdj = returns['6m'] / stddev;
+      }
 
       // Category from meta (e.g. "Equity Scheme - Large Cap Fund")
       const meta = data.meta ?? {};
@@ -164,7 +206,13 @@ async function computeTrending() {
         nav:         +current.toFixed(4),
         nav_date:    navData[0].date,
         returns,
-        score,
+        rawScores: {
+          momentum:     rawMomentum,
+          acceleration: rawAcceleration,
+          consistency:  rawConsistency,
+          recovery:     rawRecovery,
+          riskAdj:      rawRiskAdj,
+        },
       };
     } catch {
       return null;
@@ -177,6 +225,36 @@ async function computeTrending() {
   const funds = raw.filter(Boolean);
 
   logger.info(`trending — computed returns for ${funds.length} funds`);
+
+  // ── Normalize each score to 0–10 using min-max across all funds ──────────
+  function normalizeScores(funds, key) {
+    const vals = funds
+      .map(f => f.rawScores[key])
+      .filter(v => v != null && isFinite(v));
+    if (vals.length < 2) {
+      funds.forEach(f => {
+        if (!f.scores) f.scores = {};
+        f.scores[key] = null;
+      });
+      return;
+    }
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const range = max - min;
+    funds.forEach(f => {
+      if (!f.scores) f.scores = {};
+      const v = f.rawScores[key];
+      f.scores[key] = (v == null || !isFinite(v))
+        ? null
+        : range > 0 ? +((v - min) / range * 10).toFixed(2) : 5;
+    });
+  }
+
+  ['momentum', 'acceleration', 'consistency', 'recovery', 'riskAdj']
+    .forEach(k => normalizeScores(funds, k));
+
+  // Clean up raw scores from response
+  funds.forEach(f => { delete f.rawScores; });
 
   // Unique categories for filter chips
   const categories = [...new Set(funds.map(f => f.category))].sort();

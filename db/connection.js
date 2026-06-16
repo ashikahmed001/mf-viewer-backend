@@ -72,7 +72,8 @@ export async function runMigrations() {
       ('churn_rates',       'Churn Rates',             'Portfolio turnover rates per fund',               'analysis', 'pro'),
       ('sector_rotation',   'Sector Rotation Calendar','See sector weightings change month by month',     'analysis', 'pro'),
       ('discovery_chain',   'Discovery Chain',         'Which fund first picked up a stock',              'analysis', 'pro'),
-      ('rolling_returns',   'Rolling Returns',         'Point-in-time and rolling return charts per fund', 'analysis', 'pro');
+      ('rolling_returns',   'Rolling Returns',         'Point-in-time and rolling return charts per fund', 'analysis', 'pro'),
+      ('trending_scores',   'Trending Funds',          '5-dimensional score analysis for trending equity funds', 'analysis', 'pro');
 
     CREATE TABLE IF NOT EXISTS subscriptions (
       user_id          TEXT     NOT NULL PRIMARY KEY,
