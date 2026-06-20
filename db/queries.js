@@ -1047,12 +1047,14 @@ export async function getStockTracker(isin) {
       e.fund_id, f.name AS fund_name,
       e.report_month,
       ROUND(h.pct_nav * sf.scale, 4) AS pct_nav,
-      fl.fund_latest_month
+      fl.fund_latest_month,
+      s.symbol_nse
     FROM holdings h
     JOIN extractions e ON h.extraction_id = e.id
     JOIN funds        f ON f.id = e.fund_id
     JOIN sf           ON sf.id = e.id
     JOIN fund_latest  fl ON fl.fund_id = e.fund_id
+    LEFT JOIN stocks  s  ON s.isin = h.isin
     WHERE h.isin = ?
     ORDER BY f.name, e.report_month
   `, [isin]);

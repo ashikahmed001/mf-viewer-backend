@@ -317,6 +317,27 @@ router.get('/stock-peers/:isin', async (req, res) => {
   }
 });
 
+// GET /api/holdings/stock-price/:symbol — proxy to Yahoo Finance, no auth cache 15min
+router.get('/stock-price/:symbol', async (req, res) => {
+  try {
+    const symbol = decodeURIComponent(req.params.symbol);
+    if (!/^[A-Z0-9&\-\.]+$/i.test(symbol)) return res.status(400).json({ error: 'Invalid symbol' });
+    const ticker = symbol.includes('.') ? symbol : `${symbol}.NS`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1y`;
+    const yRes = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; mfviewer/1.0)' },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!yRes.ok) return res.status(502).json({ error: `Yahoo returned ${yRes.status}` });
+    const data = await yRes.json();
+    res.setHeader('Cache-Control', 'public, max-age=900'); // 15 min
+    res.json(data);
+  } catch (err) {
+    logger.error('GET /api/holdings/stock-price failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/holdings/multi-month-range/:fundId?start=YYYY-MM-DD&end=YYYY-MM-DD
 router.get('/multi-month-range/:fundId', async (req, res) => {
   try {
