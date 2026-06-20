@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import logger from '../logger.js';
 import { withCache } from '../cache.js';
+import { getDb } from '../db/connection.js';
 import {
   getHoldings, getHoldingsSummary, getDistinctIndustries, getStockTrend,
   getExtractionById, getCrossFundAnalysis, getRisingConviction, getOverlapMatrix,
