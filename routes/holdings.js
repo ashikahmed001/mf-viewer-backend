@@ -338,6 +338,56 @@ router.get('/stock-price/:symbol', async (req, res) => {
   }
 });
 
+// GET /api/holdings/stock-price-by-isin/:isin
+// Resolves ISIN → Yahoo symbol (DB first, then Yahoo search), then fetches price
+router.get('/stock-price-by-isin/:isin', async (req, res) => {
+  try {
+    const isin = decodeURIComponent(req.params.isin);
+    const db   = getDb();
+    const YUA  = 'Mozilla/5.0 (compatible; mfviewer/1.0)';
+
+    // 1. Try DB first
+    let symbol = null;
+    try {
+      const row = (await db.execute({ sql: 'SELECT symbol_nse FROM stocks WHERE isin = ?', args: [isin] })).rows[0];
+      if (row?.symbol_nse) symbol = row.symbol_nse;
+    } catch (_) {}
+
+    // 2. Fall back to Yahoo search by ISIN
+    if (!symbol) {
+      const searchUrl = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(isin)}&lang=en-US&region=IN&quotesCount=5&newsCount=0`;
+      const sRes = await fetch(searchUrl, { headers: { 'User-Agent': YUA }, signal: AbortSignal.timeout(8_000) });
+      if (sRes.ok) {
+        const sData = await sRes.json();
+        const hit = (sData?.quotes ?? []).find(q => q.exchange === 'NSI' || q.quoteType === 'EQUITY');
+        if (hit?.symbol) symbol = hit.symbol.replace('.NS', '');
+      }
+    }
+
+    if (!symbol) return res.status(404).json({ error: 'Symbol not found for ISIN' });
+
+    // 3. Fetch price data
+    const ticker = symbol.includes('.') ? symbol : `${symbol}.NS`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1y`;
+    const yRes = await fetch(url, { headers: { 'User-Agent': YUA }, signal: AbortSignal.timeout(10_000) });
+    if (!yRes.ok) return res.status(502).json({ error: `Yahoo returned ${yRes.status}` });
+    const data = await yRes.json();
+
+    // 4. Opportunistically cache symbol back to DB
+    if (symbol) {
+      db.execute({ sql: `INSERT INTO stocks (isin, name, symbol_nse) VALUES (?, ?, ?)
+        ON CONFLICT(isin) DO UPDATE SET symbol_nse = excluded.symbol_nse`,
+        args: [isin, isin, symbol] }).catch(() => {});
+    }
+
+    res.setHeader('Cache-Control', 'public, max-age=900');
+    res.json({ ...data, resolvedSymbol: `${symbol}.NS` });
+  } catch (err) {
+    logger.error('GET /api/holdings/stock-price-by-isin failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/holdings/multi-month-range/:fundId?start=YYYY-MM-DD&end=YYYY-MM-DD
 router.get('/multi-month-range/:fundId', async (req, res) => {
   try {
