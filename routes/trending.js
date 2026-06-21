@@ -219,9 +219,9 @@ async function computeTrending() {
     }
   });
 
-  // Fetch with concurrency = 20
+  // Fetch with concurrency = 50
   logger.info('trending — fetching NAV histories…');
-  const raw = await pool(tasks, 20);
+  const raw = await pool(tasks, 50);
   const funds = raw.filter(Boolean);
 
   logger.info(`trending — computed returns for ${funds.length} funds`);
@@ -284,5 +284,32 @@ router.get('/', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Called from server.js after boot to warm the cache in the background
+export async function prewarmTrending() {
+  if (cache && Date.now() - cachedAt < TTL) return; // already warm
+  logger.info('trending — pre-warming cache in background…');
+  try {
+    cache    = await computeTrending();
+    cachedAt = Date.now();
+    logger.ok(`trending — pre-warm done (${cache.total} funds)`);
+  } catch (err) {
+    logger.error('trending — pre-warm failed:', err.message);
+  }
+}
+
+// Refresh every 5.5 hours so the cache never goes cold between TTL cycles
+const REFRESH_INTERVAL = 5.5 * 60 * 60 * 1000;
+setInterval(async () => {
+  logger.info('trending — scheduled background refresh…');
+  try {
+    const fresh = await computeTrending();
+    cache    = fresh;
+    cachedAt = Date.now();
+    logger.ok(`trending — background refresh done (${cache.total} funds)`);
+  } catch (err) {
+    logger.error('trending — background refresh failed:', err.message);
+  }
+}, REFRESH_INTERVAL);
 
 export default router;
