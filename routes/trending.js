@@ -188,11 +188,30 @@ async function computeTrending() {
       if (EXCLUDE_CATS.some(kw => rawCatLower.includes(kw))) return null;
 
       // Shorten: "Equity Scheme - Large Cap Fund" → "Large Cap"
-      const category = rawCategory
+      let category = rawCategory
         .replace(/^(Equity Scheme|Hybrid Scheme|Solution Oriented Scheme|Other Scheme)\s*-\s*/i, '')
         .replace(/ Fund$/i, '')
         .replace(/ Scheme$/i, '')
         .trim() || 'Other';
+
+      // Override mfapi.in's often-wrong scheme_category using the fund name as ground truth.
+      // SEBI-defined category keywords are embedded in every fund's official name.
+      const sn = scheme.schemeName.toLowerCase();
+      if (sn.includes('small cap'))                                     category = 'Small Cap';
+      else if (sn.includes('mid cap') && sn.includes('large'))         category = 'Large & Mid Cap';
+      else if (sn.includes('mid cap'))                                  category = 'Mid Cap';
+      else if (sn.includes('large cap'))                                category = 'Large Cap';
+      else if (sn.includes('multi cap'))                                category = 'Multi Cap';
+      else if (sn.includes('flexi cap') || sn.includes('flexi-cap'))   category = 'Flexi Cap';
+      else if (sn.includes('elss') || sn.includes('tax saver') || sn.includes('tax saving')) category = 'ELSS';
+      else if (sn.includes('focused'))                                  category = 'Focused';
+      else if (sn.includes('value') && !sn.includes('balanced'))       category = 'Value';
+      else if (sn.includes('contra'))                                   category = 'Contra';
+      else if (sn.includes('dividend yield'))                           category = 'Dividend Yield';
+      else if (sn.includes('aggressive hybrid') || (sn.includes('balanced') && sn.includes('advantage'))) category = 'Aggressive Hybrid';
+      else if (sn.includes('equity savings'))                           category = 'Equity Savings';
+      else if (sn.includes('fund of fund') || sn.includes('fof') || sn.includes('overseas') || sn.includes('global') || sn.includes('international') || sn.includes('taiwan') || sn.includes('china') || sn.includes('korea') || sn.includes('japan') || sn.includes('nasdaq') || sn.includes('s&p') || sn.includes('europe') || sn.includes('us equity')) category = 'FoF / Overseas';
+      else if (sn.includes('momentum') || sn.includes('quant') || sn.includes('esg') || sn.includes('nifty') || sn.includes('sensex') || sn.includes('index') || sn.includes('banking') || sn.includes('pharma') || sn.includes('healthcare') || sn.includes('technology') || sn.includes('tech') || sn.includes('infra') || sn.includes('defence') || sn.includes('energy') || sn.includes('consumption') || sn.includes('manufacturing') || sn.includes('psu') || sn.includes('ipo') || sn.includes('special') || sn.includes('opportunit') || sn.includes('thematic') || sn.includes('sector')) category = 'Sectoral / Thematic';
 
       const schemeType = meta.scheme_type ?? '';
       const fundHouse  = meta.fund_house  ?? '';
